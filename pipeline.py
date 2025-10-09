@@ -1,42 +1,44 @@
-from typing import TypedDict, List, Union, Optional
+from typing import TypedDict, Optional, Dict
 from langgraph.graph import StateGraph, END
+import json
 
-# ==== Import agents ====
-from Agent.SQLagent import SQLAgent
-from Agent.Searchagent import SearchAgent
-from Agent.Answeragent import AnswerAgent
-from Agent.Routeagent import RouterAgent
-from Database.db import DatabaseConnector
-from SystemPrompt.SQLprompt import sql_prompt
-from SystemPrompt.Ansprompt import ans_prompt
-from SystemPrompt.Routeprompt import route_prompt
+from .Agent.SQLagent import SQLAgent
+from .Agent.Searchagent import SearchAgent
+from .Agent.Answeragent import AnswerAgent
+from .Agent.Routeagent import RouterAgent
+from .Database.db import DatabaseConnector
+from .SystemPrompt.SQLprompt import sql_prompt
+from .SystemPrompt.Ansprompt import ans_prompt
+from .SystemPrompt.Routeprompt import route_prompt
+from .Utils.SessionMemory import SessionMemory
 
 
-# ===== State =====
 class ChatState(TypedDict):
     session_id: str
     user_question: str
     route: str
-    sql_query: Optional[str]
-    db_result: Union[List[dict], str, None]
-    search_result: Optional[str]
-    final_answer: Optional[str]
-    no_data: bool
+    sql_result: Optional[dict]
+    search_result: Optional[dict]
+    answer_result: Optional[dict]
+    final_output: Optional[dict]
 
 
 class GraphOrchestrator:
+    """Main orchestrator controlling the full multi-agent pipeline."""
+
     def __init__(self):
-        # Khởi tạo DB và Agents
-        db = DatabaseConnector(server="localhost", database="Orpheo")
+        self.memory = SessionMemory()
+        db = DatabaseConnector()
+        api_key = "AIzaSyB6l_kooxHVkG2EWKI823wEMXEa_1A5lxY"
 
-        self.sql_agent = SQLAgent(system_prompt=sql_prompt, db=db)
-        self.search_agent = SearchAgent()
-        self.answer_agent = AnswerAgent(system_prompt=ans_prompt)
-        self.router_agent = RouterAgent(system_prompt=route_prompt)
+        # All agents share the same session memory
+        self.sql_agent = SQLAgent(system_prompt=sql_prompt, db=db, api_key=api_key, memory=self.memory)
+        self.search_agent = SearchAgent(system_prompt=None, api_key=api_key, memory=self.memory)
+        self.answer_agent = AnswerAgent(system_prompt=ans_prompt, api_key=api_key, memory=self.memory)
+        self.router_agent = RouterAgent(system_prompt=route_prompt, api_key=api_key, memory=self.memory)
 
-        # Build graph
+        # Build LangGraph
         graph = StateGraph(ChatState)
-
         graph.add_node("router", self.router_node)
         graph.add_node("sql", self.sql_node)
         graph.add_node("search", self.search_node)
@@ -44,15 +46,10 @@ class GraphOrchestrator:
         graph.add_node("answer", self.answer_node)
 
         graph.set_entry_point("router")
-
         graph.add_conditional_edges(
             "router",
             lambda state: state["route"],
-            {
-                "sql": "sql",
-                "search": "search",
-                "other": "other"
-            }
+            {"sql": "sql", "search": "search", "other": "other"},
         )
 
         graph.add_edge("sql", "answer")
@@ -62,85 +59,124 @@ class GraphOrchestrator:
 
         self.compiled_graph = graph.compile()
 
-    # ===== Node functions =====
+    # ========== Node Definitions ==========
+
     def router_node(self, state: ChatState) -> ChatState:
-        route = self.router_agent.route(state["session_id"], state["user_question"])
+        """Classify user question as sql / search / other."""
+        res = self.router_agent.route(state["session_id"], state["user_question"])
+        route = res.get("route", "other").strip().lower()
         state["route"] = route
         return state
 
     def sql_node(self, state: ChatState) -> ChatState:
-        res = self.sql_agent.get_query(state["session_id"], state["user_question"])
-        state["sql_query"] = res["sql"]
-        state["db_result"] = res["result"]
-        state["no_data"] = not (isinstance(res["result"], list) and len(res["result"]) > 0)
+        """Execute SQL query."""
+        result = self.sql_agent.get_query(state["session_id"], state["user_question"])
+        state["sql_result"] = result
         return state
 
     def search_node(self, state: ChatState) -> ChatState:
-        state["search_result"] = self.search_agent.run(state["user_question"])
+        """Execute web search."""
+        result = self.search_agent.run(state["session_id"], state["user_question"])
+        state["search_result"] = result
         return state
 
     def other_node(self, state: ChatState) -> ChatState:
-        state["final_answer"] = state["user_question"]
+        """Handle general or fallback questions."""
+        answer = self.answer_agent.run(
+            session_id=state["session_id"],
+            user_question=state["user_question"],
+            sql_query="-- none --",
+            query_result=state["user_question"],
+        )
+        state["answer_result"] = answer
+        state["final_output"] = answer
         return state
 
     def answer_node(self, state: ChatState) -> ChatState:
-        if state["route"] == "sql":
-            if state["no_data"]:
-                state["search_result"] = self.search_agent.run(state["user_question"])
-                state["final_answer"] = self.answer_agent.get_answer(
-                    state["session_id"],
-                    state["user_question"],
-                    sql_query=state["sql_query"],
-                    query_result="❌ Không có dữ liệu trong DB.\nDữ liệu web:\n" + state["search_result"]
-                )
-            else:
-                state["final_answer"] = self.answer_agent.get_answer(
-                    state["session_id"],
-                    state["user_question"],
-                    sql_query=state["sql_query"],
-                    query_result=state["db_result"]
-                )
-        elif state["route"] == "search":
-            state["final_answer"] = self.answer_agent.get_answer(
-                state["session_id"],
-                state["user_question"],
-                sql_query="-- không dùng SQL --",
-                query_result=state["search_result"]
+        """Generate final natural-language answer."""
+        route = state["route"]
+        session_id = state["session_id"]
+        user_question = state["user_question"]
+
+        if route == "sql":
+            sql_res = state.get("sql_result", {})
+            answer = self.answer_agent.run(
+                session_id=session_id,
+                user_question=user_question,
+                sql_query=sql_res.get("sql_query", "SQL executed"),
+                query_result=sql_res.get("db_result", []),
             )
-        elif state["route"] == "other":
-            state["final_answer"] = self.answer_agent.get_answer(
-                state["session_id"],
-                state["user_question"],
-                sql_query="-- không dùng SQL --",
-                query_result=state["final_answer"]
+
+        elif route == "search":
+            search_res = state.get("search_result", {})
+            query_result = (
+                search_res.get("db_result")
+                or search_res.get("message")
+                or str(search_res)
             )
+            answer = self.answer_agent.run(
+                session_id=session_id,
+                user_question=user_question,
+                sql_query="-- no SQL used --",
+                query_result=query_result,
+            )
+
+        else:
+            answer = self.answer_agent.run(
+                session_id=session_id,
+                user_question=user_question,
+                sql_query="-- none --",
+                query_result=user_question,
+            )
+
+        # Store conversation in shared memory
+        self.memory.append_user(session_id, user_question)
+        self.memory.append_ai(session_id, answer.get("message"))
+
+        # Combine final output
+        state["answer_result"] = answer
+        state["final_output"] = answer
         return state
 
-    # ===== Public run =====
+    # ========== Public Method ==========
+
     def run(self, session_id: str, user_question: str) -> dict:
-        return self.compiled_graph.invoke({
-            "session_id": session_id,
-            "user_question": user_question
-        })
+        """Run the full pipeline and return unified JSON."""
+        result = self.compiled_graph.invoke(
+            {"session_id": session_id, "user_question": user_question}
+        )
+
+        final = result.get("final_output", {})
+        if not final:
+            final = {
+                "question_old": [user_question],
+                "message": "No response generated.",
+                "audio": [],
+                "location": {},
+            }
+
+        # Replace question_old with global conversation memory
+        final["question_old"] = self.memory.get_history_list(session_id)
+        return final
 
 
-# ===== Test =====
 if __name__ == "__main__":
     orchestrator = GraphOrchestrator()
 
     questions = [
-        "Giá tour Huế là bao nhiêu?",
-        "Tôi muốn đi Đức",
-        "Hello, tôi là Đức Anh"
+        # "Gioi thieu POI 201",
+        # "Co",
+        # "Hello, my name is anansupercuteeeee",
+        # "what is my name?", 
+        # "Ưhich POI i have just asked you to introduce?",
+        "location of POI 2",
+        "co",
+        "i ưant to hear media about Chinatown",
     ]
 
     for q in questions:
-        output = orchestrator.run("s1", q)
-
-        print("=" * 50)
-        print("❓ Câu hỏi:", q)
-        print("📍 Route:", output["route"])
-        print("📝 SQL:", output.get("sql_query"))
-        print("📊 DB result:", output.get("db_result"))
-        print("🌍 Search result:", str(output.get("search_result"))[:200], "...")
-        print("💬 Final Answer:", output.get("final_answer"))
+        output = orchestrator.run("session_1", q)
+        print("=" * 80)
+        print("Question:", q)
+        print("Final JSON Output:")
+        print(json.dumps(output, indent=2, ensure_ascii=False))

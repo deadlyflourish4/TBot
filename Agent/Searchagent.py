@@ -1,11 +1,14 @@
 import requests
 from bs4 import BeautifulSoup
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import Tool, AgentExecutor, initialize_agent, AgentType
-from langchain.tools import DuckDuckGoSearchRun
+from langchain.agents import Tool, initialize_agent, AgentType
+from langchain_community.tools import DuckDuckGoSearchRun
+from .BaseAgent import BaseAgent
+from ..Utils.SessionMemory import SessionMemory
+
 
 class WebScraperTool:
-    """Custom tool để scrape 1 URL."""
+    """Extract readable text from a URL by removing HTML noise."""
+
     def run(self, url: str) -> str:
         try:
             headers = {
@@ -23,21 +26,34 @@ class WebScraperTool:
                 tag.extract()
 
             text = soup.get_text(separator="\n", strip=True)
-            text = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            text = "\n".join(lines)
 
-            return text[:4000] + ("...\n[Truncated]" if len(text) > 4000 else "")
+            return text[:1000] + ("...\n[Truncated]" if len(text) > 1000 else "")
         except Exception as e:
-            return f"Error scraping {url}: {e}"
+            return f"[Error scraping {url}: {e}]"
 
-class SearchAgent:
-    def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+
+class SearchAgent(BaseAgent):
+    """
+    SearchAgent:
+      - Performs factual web searches (DuckDuckGo + Gemini).
+      - Logs user query + LLM result into shared SessionMemory.
+      - Returns unified JSON response for downstream AnswerAgent.
+    """
+
+    def __init__(
+        self,
+        system_prompt: str = None,
+        api_key: str = "",
+        memory: SessionMemory = None,
+    ):
+        super().__init__(
+            system_prompt=system_prompt
+            or "You are a helpful travel search assistant.",
+            api_key=api_key,
             temperature=0.3,
-            max_tokens=None,
-            timeout=None,
-            max_retries=2,
-            google_api_key="AIzaSyBSHh_9Yd2-o8xjZsjzBqwnz24FAHR3GJU",
+            memory=memory,
         )
 
         search_tool = DuckDuckGoSearchRun(name="Search", num_results=3)
@@ -47,12 +63,12 @@ class SearchAgent:
             Tool(
                 name="Search",
                 func=search_tool.run,
-                description="Tìm kiếm nhanh thông tin từ web."
+                description="Perform web searches for travel destinations, attractions, or events.",
             ),
             Tool(
                 name="WebScraper",
                 func=scraper_tool.run,
-                description="Lấy toàn văn nội dung từ một URL."
+                description="Extract clean text content from a webpage.",
             ),
         ]
 
@@ -60,11 +76,56 @@ class SearchAgent:
             tools=self.tools,
             llm=self.llm,
             agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=True,
+            verbose=False,
             handle_parsing_errors=True,
             early_stopping_method="generate",
         )
 
-    def run(self, query: str) -> str:
-        """Hỏi agent search."""
-        return self.agent.run(query)
+    def run(self, session_id: str, query: str) -> dict:
+        """Perform search, log to memory, and return structured output."""
+        try:
+            # Log user query to memory
+            # if self.memory:
+            #     self.memory.append_user(session_id, query)
+
+            # Perform search
+            raw_text = self.agent.run(query)
+            message_text = raw_text.strip() if raw_text else ""
+
+            # Log AI response
+            # if self.memory:
+            #     self.memory.append_ai(session_id, message_text)
+
+            # Extract audio links
+            audio_links = [
+                token for token in message_text.split()
+                if token.lower().endswith(".mp3")
+            ]
+
+            # Trim long output for readability
+            message = (
+                f"According to recent web information:\n\n{message_text[:1500]}"
+                + ("..." if len(message_text) > 1500 else "")
+            )
+
+            # Unified structured output
+            return self.format_json(
+                question_old=self.memory.get_history_list(session_id)
+                if self.memory else [query],
+                message=message,
+                audio=list(set(audio_links)),
+                location={},
+            )
+
+        except Exception as e:
+            error_msg = f"Search failed: {e}"
+            # if self.memory:
+            #     self.memory.append_ai(session_id, error_msg)
+
+            return self.format_json(
+                question_old=self.memory.get_history_list(session_id)
+                if self.memory else [query],
+                message=error_msg,
+                audio=[],
+                location={},
+            )

@@ -1,62 +1,103 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import (
-    SystemMessagePromptTemplate, 
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    ChatPromptTemplate
-)
-from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.runnables.history import RunnableWithMessageHistory
+from .BaseAgent import BaseAgent
+from ..Utils.SessionMemory import SessionMemory
 
 
-class RouterAgent:
-    def __init__(self, system_prompt: str):
-        # 1. Khởi tạo LLM
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+class RouterAgent(BaseAgent):
+    """
+    RouterAgent:
+      - Classifies user input into one of three routes:
+          1. 'sql'    → internal database lookup
+          2. 'search' → external web query
+          3. 'other'  → small talk or unrecognized
+      - Writes both user query and routing result into shared SessionMemory.
+      - Returns unified JSON format for pipeline control.
+    """
+
+    def __init__(
+        self,
+        system_prompt: str,
+        api_key: str,
+        memory: SessionMemory = None,
+    ):
+        super().__init__(
+            system_prompt=system_prompt,
+            api_key=api_key,
             temperature=0,
-            max_tokens=None,
-            timeout=None,
-            max_retries=2,
-            google_api_key="AIzaSyBJQy05Kx09kMV384-dMxY6EPx-1H29vsY"
+            memory=memory,
         )
 
-        # 2. Prompt template
-        prompt_template = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(system_prompt),
-            MessagesPlaceholder(variable_name="history"),
-            HumanMessagePromptTemplate.from_template("{query}")
-        ])
+    def route(self, session_id: str, query: str) -> dict:
+        """Run routing classifier and store result in memory."""
+        try:
+            # if self.memory:
+            #     self.memory.append_user(session_id, query)
 
-        # 3. Pipeline
-        pipeline = prompt_template | self.llm
+            # Run classifier model
+            route_text = self.run_llm(session_id, query)
+            route = (route_text or "").strip().lower()
 
-        # 4. Lưu history cho từng session
-        self.chat_map = {}
+            # Normalize prefixes like "Route: SQL"
+            for prefix in ["route:", "result:", "answer:", "type:"]:
+                if route.startswith(prefix):
+                    route = route.replace(prefix, "").strip()
 
-        def get_chat_history(session_id: str) -> InMemoryChatMessageHistory:
-            if session_id not in self.chat_map:
-                self.chat_map[session_id] = InMemoryChatMessageHistory()
-            return self.chat_map[session_id]
+            # Basic route normalization
+            if any(x in route for x in ["sql", "database", "query"]):
+                route = "sql"
+            elif any(x in route for x in ["search", "web", "google"]):
+                route = "search"
+            else:
+                # Handle conversational confirmations
+                if route in ["yes", "ok", "okay", "sure", "yeah", "có", "dạ", "ừ"]:
+                    route = self._infer_from_history(session_id)
+                else:
+                    route = "other"
 
-        # 5. Pipeline with memory
-        self.pipeline_with_history = RunnableWithMessageHistory(
-            pipeline,
-            get_session_history=get_chat_history,
-            input_messages_key="query",
-            history_messages_key="history"
-        )
+            # Log route decision into memory
+            # if self.memory:
+            #     self.memory.append_ai(session_id, f"[Routing] → {route.upper()}")
 
-    def route(self, session_id: str, query: str) -> str:
-        """Phân loại câu hỏi thành sql | search | other."""
-        response = self.pipeline_with_history.invoke(
-            {"query": query},
-            config={"configurable": {"session_id": session_id}}
-        )
+            return {
+                "question_old": (
+                    self.memory.get_history_list(session_id)
+                    if self.memory
+                    else [query]
+                ),
+                "message": f"Routed to {route.upper()} branch.",
+                "audio": [],
+                "location": {},
+                "route": route,
+            }
 
-        route = response.content.strip().lower()
+        except Exception as e:
+            error_msg = f"Routing failed: {e}"
+            # if self.memory:
+            #     self.memory.append_ai(session_id, error_msg)
 
-        # Bảo vệ output (chỉ nhận giá trị hợp lệ)
-        if route not in ["sql", "search", "other"]:
+            return {
+                "question_old": (
+                    self.memory.get_history_list(session_id)
+                    if self.memory
+                    else [query]
+                ),
+                "message": error_msg,
+                "audio": [],
+                "location": {},
+                "route": "other",
+            }
+
+    def _infer_from_history(self, session_id: str) -> str:
+        """Infer previous context when user only replies with short confirmation."""
+        if not self.memory:
             return "other"
-        return route
+
+        history = self.memory.get(session_id).messages
+        for msg in reversed(history):
+            if msg.type == "ai":
+                content = msg.content.lower()
+                if "sql" in content:
+                    return "sql"
+                if "search" in content:
+                    return "search"
+
+        return "other"
