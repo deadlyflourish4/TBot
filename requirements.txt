@@ -1,0 +1,14 @@
+langchain
+langchain_google_genai
+
+langchain_community
+langgraph
+pydantic
+sqlalchemy
+python-dotenv
+langdetect
+edge-tts
+deep-translator     
+requests
+fastapi[standard]
+pyodbc

@@ -1,5 +1,5 @@
 from .BaseAgent import BaseAgent
-from ..Database.db import DatabaseConnector
+from ..Database.db import MultiDBManager
 from ..Utils.SessionMemory import SessionMemory
 
 
@@ -15,7 +15,7 @@ class SQLAgent(BaseAgent):
     def __init__(
         self,
         system_prompt: str,
-        db: DatabaseConnector,
+        db: MultiDBManager,
         api_key: str,
         memory: SessionMemory = None,
     ):
