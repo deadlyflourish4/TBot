@@ -1,6 +1,6 @@
 langchain
 langchain_google_genai
-
+ddgs
 langchain_community
 langgraph
 pydantic

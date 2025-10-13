@@ -1,5 +1,5 @@
-from .BaseAgent import BaseAgent
-from ..Utils.SessionMemory import SessionMemory
+from Agent.BaseAgent import BaseAgent
+from Utils.SessionMemory import SessionMemory
 
 
 class RouterAgent(BaseAgent):

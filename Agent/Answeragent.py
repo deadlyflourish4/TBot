@@ -4,8 +4,8 @@ from langchain.prompts import (
     MessagesPlaceholder,
     ChatPromptTemplate,
 )
-from .BaseAgent import BaseAgent
-from ..Utils.SessionMemory import SessionMemory
+from Agent.BaseAgent import BaseAgent
+from Utils.SessionMemory import SessionMemory
 
 class AnswerAgent(BaseAgent):
     """

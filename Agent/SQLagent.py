@@ -1,6 +1,7 @@
-from .BaseAgent import BaseAgent
-from ..Database.db import MultiDBManager
-from ..Utils.SessionMemory import SessionMemory
+from Agent.BaseAgent import BaseAgent
+# from ..Database.db import MultiDBManager
+from Database.db import MultiDBManager
+from Utils.SessionMemory import SessionMemory
 
 
 class SQLAgent(BaseAgent):
