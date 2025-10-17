@@ -12,3 +12,4 @@ deep-translator
 requests
 fastapi[standard]
 pyodbc
+google-cloud-storage

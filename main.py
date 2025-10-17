@@ -14,7 +14,7 @@ from pipeline import GraphOrchestrator
 # from Azure_blob.blob import AzureBlobUploader
 from Chat.chatsession import ChatManager
 from Database.db import MultiDBManager
-
+from GCP.storage import GCStorage
 
 app = FastAPI(title="Orpheo Multi-Region API")
 
@@ -24,11 +24,9 @@ bot = GraphOrchestrator()
 #     connection_string=getenv("BLOB_CONNECTION_STRING"),
 #     container_name="tts-audio"
 # )
-db_manager = MultiDBManager(
-    username=getenv("DB_USER", "sqlserver"),
-    password=getenv("DB_PASS", "CHANGE_ME"),
-)
+db_manager = MultiDBManager()
 chat_sessions = ChatManager(db_manager=db_manager, session_timeout=1800)
+tts_storage = GCStorage(credentials_path="./GCP/rare-karma-468001-k3-a7efcf8a7c80.json")
 
 # --- cache voices ---
 VOICES_CACHE = None
@@ -87,14 +85,43 @@ async def text_to_speech(req: TextRequest):
         volume="+5%",
     )
     await communicate.save(filepath)
-
+    print(filepath)
     return {
-        "status": "success",
         "language_detected": lang_code,
         "voice_used": voice,
         "file_path": filepath,
     }
 
+@app.post("/save-tts")
+def save_tts(file_path):
+    if not os.path.exists(file_path):
+        return {"error": f"File not found: {file_path}"}
+    
+    try:
+        url = tts_storage.upload_blob("tts-script", file_path)
+        os.remove(file_path)
+
+        return {
+            "url": url
+        }
+    except Exception as e:
+        return {
+            "message": str(e)
+        }
+    
+@app.post("/delete-tts")
+def delete_tts(url):
+    try:
+        url = tts_storage.delete_blob(url)
+
+        return {
+            "url": url
+        }
+    except Exception as e:
+        return {
+            "message": str(e)
+        }
+    
 # ---------- TRANSLATE ----------
 @app.post("/text-translate")
 async def text_translate(req: TextRequest, target_lang: str = "en"):
@@ -131,17 +158,4 @@ async def chatbot_response(req: ChatRequest):
     session.add_message("user", req.text)
     session.add_message("assistant", response_text)
 
-    return {
-        "status": "success",
-        "session_id": session_id,
-        "region_id": region_id,
-        "response": response_text,
-    }
-
-# ---------- graceful shutdown ----------
-@app.on_event("shutdown")
-def shutdown_event():
-    # đóng toàn bộ chat session còn lại
-    for sid in list(chat_sessions.sessions.keys()):
-        chat_sessions.close_session(sid)
-    print("[App] Shutdown cleanup done.")
+    return response_text
