@@ -1,15 +1,24 @@
-langchain
-langchain_google_genai
-ddgs
-langchain_community
+# --- LangChain ecosystem ---
+langchain==0.3.27
+langchain-core
+langchain-community
+langchain-google-genai
 langgraph
-pydantic
-sqlalchemy
-python-dotenv
-langdetect
-edge-tts
-deep-translator     
-requests
+
+# --- FastAPI & infra ---
 fastapi[standard]
+uvicorn
+sqlalchemy
+pydantic
+python-dotenv
+requests
+langdetect
+ddgs
+edge-tts==7.2.1
+deep-translator
 pyodbc
 google-cloud-storage
+google-genai
+pillow
+PyJWT
+pwdlib[argon2]

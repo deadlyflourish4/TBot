@@ -53,8 +53,8 @@ class SQLAgent(BaseAgent):
                 except Exception as e:
                     all_results.append({"error": str(e), "sql": sql_cmd})
 
-            if self.memory:
-                self.memory.append_ai(session_id, f"[SQL executed]\n{sql_text}")
+            # if self.memory:
+            #     self.memory.append_ai(session_id, f"[SQL executed]\n{sql_text}")
 
             return {
                 "question": query,

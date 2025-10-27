@@ -12,10 +12,15 @@ gclout auth login
 gcloud auth configure-docker asia-docker.pkg.dev  
 
 docker build -t chatbot . 
-docker build -t asia-docker.pkg.dev/rare-karma-468001-k3/chatbot-guidepass/chatbot . 
-docker tag chatbot asia-docker.pkg.dev/rare-karma-468001-k3/chatbot-guidepass/chatbot 
-docker push asia-docker.pkg.dev/rare-karma-468001-k3/chatbot-guidepass/chatbot  
-gcloud run deploy chatbot --image asia-docker.pkg.dev/rare-karma-468001-k3/chatbot-guidepass/chatbot:latest --region asia-southeast1 --allow-unauthenticated
+docker build -t asia-docker.pkg.dev/guidepassasiacloud/guidepassasiachatbot/chatbot . 
+docker tag chatbot asia-docker.pkg.dev/guidepassasiacloud/guidepassasiachatbot/chatbot 
+docker push asia-docker.pkg.dev/guidepassasiacloud/guidepassasiachatbot/chatbot  
+gcloud run deploy chatbot ^
+  --image asia-docker.pkg.dev/guidepassasiacloud/guidepassasiachatbot/chatbot:latest ^
+  --region=asia-southeast1 ^
+  --platform=managed ^
+  --set-env-vars STATIC_TOKEN="470dce3ef7229267af60319f5079d5f99d6121e371e1823d028d1d170c9463ef" ^
+  --allow-unauthenticated
 ```
 
 ### Work in Progress

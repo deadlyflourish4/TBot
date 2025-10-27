@@ -11,6 +11,7 @@ from SystemPrompt.Ansprompt import ans_prompt
 from SystemPrompt.Routeprompt import route_prompt
 from Utils.SessionMemory import SessionMemory
 from sqlalchemy import text
+from langdetect import detect
 
 class DBWrapper:
     """Gói SQLAlchemy engine thành interface có run_query()"""
@@ -29,6 +30,8 @@ class ChatState(TypedDict):
     user_question: str
     route: str
     region_id: int
+    project_id: int
+    user_location: str
     sql_result: Optional[dict]
     search_result: Optional[dict]
     answer_result: Optional[dict]
@@ -40,7 +43,7 @@ class GraphOrchestrator:
 
     def __init__(self):
         self.memory = SessionMemory()
-        self.api_key = "AIzaSyB6l_kooxHVkG2EWKI823wEMXEa_1A5lxY"
+        self.api_key = "AIzaSyBAJNJtdN-kIkymLWpzxW2CC9ohYzersc0"
         self.db_manager = MultiDBManager()
 
         # Agents không phụ thuộc DB
@@ -78,9 +81,24 @@ class GraphOrchestrator:
 
     def sql_node(self, state: ChatState) -> ChatState:
         region_id = state.get("region_id", 0)
+        project_id = state.get("project_id", 1)
         db_name = self.db_manager.DB_MAP[region_id]["prefix"]
-        new_sql_prompt = sql_prompt.replace("{DB_PREFIX}", db_name)
 
+        user_loc = state.get("user_location", "")
+        lat, lon = None, None
+        if user_loc and "," in user_loc:
+            try:
+                lat, lon = map(str.strip, user_loc.split(","))
+            except ValueError:
+                pass
+
+        new_sql_prompt = (
+                sql_prompt
+                .replace("{DB_PREFIX}", db_name)
+                .replace("{USER_LAT}", lat or "NULL")
+                .replace("{USER_LON}", lon or "NULL")
+                .replace("{ProjectID}", str(project_id))
+            )
         db_engine = self.db_manager.get_engine(region_id)
         db = DBWrapper(db_engine)
 
@@ -89,7 +107,7 @@ class GraphOrchestrator:
 
         print(f"[SQL_NODE] Region={region_id} | SQL={result.get('sql_query')}")
         print(f"[SQL_NODE] Rows={len(result.get('db_result', []))}")
-
+        print(result["db_result"][:3])
         state["sql_result"] = result
         return state
 
@@ -114,7 +132,15 @@ class GraphOrchestrator:
         route = state["route"]
         session_id = state["session_id"]
         user_question = state["user_question"]
+        
+        try:
+            lang_code = detect(user_question)
+        except Exception:
+            lang_code = "en"
 
+        localized_prompt = ans_prompt.replace("{language}", lang_code)
+        self.answer_agent.system_prompt = localized_prompt
+        
         if route == "sql":
             sql_res = state.get("sql_result", {})
             answer = self.answer_agent.run(
@@ -142,19 +168,24 @@ class GraphOrchestrator:
 
         # Lưu vào session memory
         self.memory.append_user(session_id, user_question)
-        self.memory.append_ai(session_id, answer.get("message"))
+        # self.memory.append_ai(session_id, answer.get("message"))
         state["answer_result"] = answer
         state["final_output"] = answer
         return state
 
     # ========== Run pipeline ==========
 
-    def run(self, session_id: str, user_question: str, region_id: int = 0) -> dict:
+    def run(self, session_id: str, user_question: str, user_location: str, project_id: int, region_id: int = 0) -> dict:
         """Run pipeline có region riêng cho mỗi request."""
+        history_list = self.memory.get_history_list(session_id)
+        # Ghép lịch sử cũ + câu hỏi mới thành 1 đoạn hội thoại
+        context_block = "\n".join(history_list + [f"User: {user_question}"])
         state = {
             "session_id": session_id,
-            "user_question": user_question,
+            "user_question": context_block,
+            "user_location": user_location,
             "region_id": region_id,
+            "project_id": project_id,
         }
         result = self.compiled_graph.invoke(state)
         final = result.get("final_output", {})

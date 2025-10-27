@@ -4,6 +4,7 @@ from langchain.agents import Tool, initialize_agent, AgentType
 from langchain_community.tools import DuckDuckGoSearchRun
 from Agent.BaseAgent import BaseAgent
 from Utils.SessionMemory import SessionMemory
+from langchain_community.tools import Tool
 
 
 class WebScraperTool:
