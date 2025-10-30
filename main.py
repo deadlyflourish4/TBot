@@ -5,6 +5,7 @@ import uuid
 from io import BytesIO
 from os import getenv
 from typing import Optional, List
+from datetime import datetime
 
 # ===== 2. Third-party imports =====
 from fastapi import FastAPI, Body, HTTPException, File, UploadFile, Form, Depends
@@ -119,13 +120,13 @@ async def get_voice(lang_code: str) -> str:
 @app.post("/api/text-to-speech")
 async def text_to_speech(req: TextRequest):
     """
-    Generate a text-to-speech (TTS) audio stream and store it temporarily in memory.
+    Generate text-to-speech (TTS) audio and upload to GCS.
 
     Args:
-        req (TextRequest): Input model containing the 'text' field.
+        req (TextRequest): Input containing 'text'.
 
     Returns:
-        dict: JSON response with tts_id, selected voice, language, and status message.
+        dict: JSON response with metadata and upload URL.
     """
     text = req.text.strip()
     if not text:
@@ -133,7 +134,7 @@ async def text_to_speech(req: TextRequest):
     if len(text) > 1000:
         return {"error": "Text too long (max 1000 chars)"}
 
-    # Detect language
+    # Detect language and select voice
     lang_code = detect(text)
     voice = "en-US-JennyNeural"
     try:
@@ -152,55 +153,55 @@ async def text_to_speech(req: TextRequest):
             buffer.write(chunk["data"])
     buffer.seek(0)
 
-    tts_id = uuid.uuid4().hex[:8]
-    tts_buffers[tts_id] = buffer
+    # Generate a globally unique file name
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    tts_id = uuid.uuid4().hex
+    blob_name = f"tts/{timestamp}_{tts_id}.mp3"
+
+    try:
+        gcs_url = tts_storage.upload_blob_from_memory(GCS_bucket, buffer, blob_name)
+    except Exception as e:
+        return {"error": f"GCS upload failed: {str(e)}"}
+    finally:
+        buffer.close()
 
     return {
-        "tts_id": tts_id,
+        "tts_id": tts_id[:8],  # short form for tracking
         "voice_used": voice,
         "language_detected": lang_code,
-        "message": "TTS stored in memory. Call /upload-tts to upload or discard."
+        "gcs_url": gcs_url,
+        "message": "TTS successfully generated and uploaded to GCS."
     }
 
-
 @app.post("/api/upload-tts")
-async def upload_tts(tts_id: str, upload_name: str | None = None, upload: bool = True):
+async def upload_tts(gcs_url: str, upload: bool = True):
     """
-    Upload or discard a previously generated text-to-speech (TTS) audio buffer.
+    Upload or discard a previously generated text-to-speech (TTS) audio file.
+
     Args:
-        tts_id (str): The unique identifier of the in-memory TTS buffer to process.
-        upload_name (str | None): Optional custom filename (without extension)
-            for the uploaded file. If not provided, a default name `tts_<tts_id>.mp3`
-            will be used.
-        upload (bool): Whether to upload the buffer to GCS. If False, the buffer
-            is discarded instead.
+        gcs_url (str): The public URL of the file in GCS.
+        upload (bool): If False, delete the file. If True, keep it.
 
     Returns:
-        dict: A JSON object containing:
-            - "message" (str): The result of the operation (uploaded or discarded).
-            - "public_url" (str, optional): The public URL of the uploaded file if
-              `upload=True`.
-            - "error" (str, optional): An error message if the upload failed.
+        dict: JSON message about the result.
     """
-    global tts_buffers
+    if not gcs_url:
+        return {"error": "Missing gcs_url"}
 
-    if tts_id not in tts_buffers:
-        return {"error": f"No buffer found for ID {tts_id}"}
-
-    buffer = tts_buffers.pop(tts_id)
-
-    if upload:
-        try:
-            blob_name = f"{upload_name}.mp3" if upload_name else f"tts_{tts_id}.mp3"
-            url = tts_storage.upload_blob_from_memory(GCS_bucket, buffer, blob_name)
+    try:
+        if not upload:
+            # Discard (delete) the blob
+            tts_storage.delete_blob(gcs_url)
+            return {"message": f"TTS file deleted: {gcs_url}"}
+        else:
+            # No action needed — already uploaded
             return {
-                "message": "File uploaded successfully.",
-                "public_url": url
+                "message": "TTS file retained successfully.",
+                "public_url": gcs_url
             }
-        except Exception as e:
-            return {"error": str(e)}
-    else:
-        return {"message": f"Buffer {tts_id} discarded without upload."}
+
+    except Exception as e:
+        return {"error": f"Operation failed: {str(e)}"}
 
 @app.post("/api/delete-tts")
 def delete_tts(url: str = Body(..., embed=True)):
@@ -235,7 +236,7 @@ async def chatbot_response(req: ChatRequest):
         session = chat_sessions.create_session(req.region_id, session_id=session_id)
         session_id = session.session_id
         
-    region_id = session.region_id
+    region_id = req.region_id
 
     response_text = bot.run(
         session_id=session_id,

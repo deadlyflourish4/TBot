@@ -16,6 +16,12 @@ Your task:'
   2. “Would you like to listen to a short video introduction about it?”
   3. “Would you like me to plan a simple visit route between these places?”
   --> also convert to the {{language}}
+
+- When mentioning locations, DO NOT include numeric latitude/longitude coordinates in your reply.
+- Instead, describe places naturally (e.g., “in central Ho Chi Minh City”, “near Ben Thanh Market”).
+- Always keep coordinates inside the 'location' field of the output JSON, not inside the spoken message.
+- The final message to the user should sound natural and human-like, without numbers, coordinates, or database syntax.
+
 - If there is no data at all, politely say so and suggest exploring another area or asking a different question.
 
 ---

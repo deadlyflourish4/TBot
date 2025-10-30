@@ -43,13 +43,16 @@ class GraphOrchestrator:
 
     def __init__(self):
         self.memory = SessionMemory()
-        self.api_key = "AIzaSyBAJNJtdN-kIkymLWpzxW2CC9ohYzersc0"
+        self.api_key = "AIzaSyCdHT7unR6kxSedQXPgBeGvBeMgJL-bJuQ"
         self.db_manager = MultiDBManager()
 
         # Agents không phụ thuộc DB
         self.search_agent = SearchAgent(system_prompt=None, api_key=self.api_key, memory=self.memory)
+        self.search_agent.region_suffix = "{region_id}"
         self.answer_agent = AnswerAgent(system_prompt=ans_prompt, api_key=self.api_key, memory=self.memory)
+        self.answer_agent.region_suffix = "{region_id}"
         self.router_agent = RouterAgent(system_prompt=route_prompt, api_key=self.api_key, memory=self.memory)
+        self.router_agent.region_suffix = "{region_id}"
 
         # Build graph
         graph = StateGraph(ChatState)
@@ -168,7 +171,7 @@ class GraphOrchestrator:
 
         # Lưu vào session memory
         self.memory.append_user(session_id, user_question)
-        # self.memory.append_ai(session_id, answer.get("message"))
+        self.memory.append_ai(session_id, answer.get("message"))
         state["answer_result"] = answer
         state["final_output"] = answer
         return state
@@ -177,11 +180,12 @@ class GraphOrchestrator:
 
     def run(self, session_id: str, user_question: str, user_location: str, project_id: int, region_id: int = 0) -> dict:
         """Run pipeline có region riêng cho mỗi request."""
-        history_list = self.memory.get_history_list(session_id)
+        session_key = f"{session_id}_region{region_id}"
+        history_list = self.memory.get_history_list(session_key)
         # Ghép lịch sử cũ + câu hỏi mới thành 1 đoạn hội thoại
         context_block = "\n".join(history_list + [f"User: {user_question}"])
         state = {
-            "session_id": session_id,
+            "session_id": session_key,
             "user_question": context_block,
             "user_location": user_location,
             "region_id": region_id,
@@ -196,5 +200,5 @@ class GraphOrchestrator:
                 "audio": [],
                 "location": {},
             }
-        final["question_old"] = self.memory.get_history_list(session_id)
+        final["question_old"] = self.memory.get_history_list(session_key)
         return final
