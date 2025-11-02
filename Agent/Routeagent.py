@@ -56,7 +56,7 @@ class RouterAgent(BaseAgent):
             # Log route decision into memory
             # if self.memory:
             #     self.memory.append_ai(session_id, f"[Routing] → {route.upper()}")
-
+            print(f"THIS QUESTION LEAD TO ROUTE: {route}")
             return {
                 "question_old": (
                     self.memory.get_history_list(session_id)

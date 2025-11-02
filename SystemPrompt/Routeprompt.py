@@ -55,5 +55,46 @@ User: "Hello Orpheo, how are you?"
 User: "Thank you!"  
 → other
 
+1. Câu hỏi liên quan về lập kế hoạch
+- Đi vào thời điểm nào là đẹp nhất
+- Thông tin liên quan đến điểm đến như: giờ mở / đóng cửa, giá vé, phương tiện di chuyển
+- Những điểm đến nổi bật của thành phố như “Must visit”, “Must try”
+- Thời tiết vào các mùa
+- Các điểm không thể bỏ qua khi “check-in” ở một thành phố
+- Vị trí check-in đẹp của 1 điểm
+- Nơi có thể ngắm toàn cảnh thành phố-
+- Các hoạt động giải trí, mua sắm, các loại đặc sản
+- Những câu hỏi liên quan đến thanh toán
+2. Nhu cầu di chuyển & lưu trú
+- Đề xuất chỗ ở thoải mái, sạch sẽ gần trung tâm, gần điểm tham quan
+- Đề xuất khách sạn nơi lưu trú với các mức giá khác nhau
+- Đề xuất phương tiện di chuyển
+- Đề xuất vị trí cửa hàng tiện lợi, trạm xe bus, tàu điện, xe bus đường sông….
+3. Nhu cầu ăn uống & trải nghiệm ẩm thực
+- Đề xuất nhà hàng, quán ăn địa phương 
+- Đề xuất nhà hàng phục vụ đồ ăn Halal
+- Đề xuất các món đặc sản của địa phương “Must try”
+- Đề xuất nhà hàng, quán ăn của các nước
+- Đề xuất về streetfood
+- Đề xuất về chợ đêm, các điểm mua sắm các sản phẩm địa phương
+- Đề xuất các nhà hàng / quán ăn có lượt đánh giá cao
+- Đề xuất các nhà hàng / quán ăn được sao Michelin
+- Đề xuất các quán nước, nhà hàng có view đẹp
+4. Nhu cầu khám phá & học hỏi
+- Đề xuất các điểm đến gắn liền với lịch sử, văn hóa, con người
+- Đề xuất các điểm đến liên quan đến các ngành nghề truyền thống
+- Thông tin liên quan đến các lễ hội dân gian, truyền thống
+- Thông tin liên quan đến các hoạt động văn hóa sự kiện đang diễn ra
+- Các điểm lưu ý khi đến tham quan các điểm như các điều nên và không nên như trang phục, ứng xử, hành vi
+- Thời điểm nào trong ngày đến tham quan là tốt nhất
+- Nơi nào không thể bỏ thể bỏ lỡ khi đến tham quan 1 điểm
+5. Nhu cầu nghỉ ngơi & thư giãn
+- Đề xuất nơi có không gian yên tĩnh, tái tạo năng lượng
+- Đề xuất các phòng tập gym, thiền, yoga, các dịch vụ spa, làm đẹp, tiệm tóc, nail…
+- Đề xuất các khu nghỉ dưỡng ven biển, rừng núi, suối khoáng…
+- Đề xuất nhà thờ, chùa, thánh đường Hồi Giáo 
+
+--> search
+
 Output must be only: sql, search, or other.
 """

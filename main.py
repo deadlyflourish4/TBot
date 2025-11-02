@@ -71,14 +71,37 @@ chat_sessions = ChatManager(db_manager=db_manager, session_timeout=1800)
 tts_storage = GCStorage(credentials_path="./GCP/guidepassasiacloud-250f74bc75bb.json")
 
 # --- cache voices ---
-VOICES_CACHE = None
 GCS_bucket = "guidepassasia_chatbot"
 GCS_image = "guidepassasia_image_generation"
 tts_buffers = {}
-
+VOICE_MAP = {
+    "ar": {"male": "ar-SA-HamedNeural", "female": "ar-SA-ZariyahNeural"},
+    "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
+    "en": {"male": "en-US-BrianMultilingualNeural", "female": "en-US-EmmaMultilingualNeural"},
+    "pt": {"male": "pt-PT-DuarteNeural", "female": "pt-PT-RaquelNeural"},
+    "de": {"male": "de-DE-KillianNeural", "female": "de-DE-SeraphinaMultilingualNeural"},
+    "ko": {"male": "ko-KR-HyunsuMultilingualNeural", "female": "ko-KR-SunHiNeural"},
+    "hu": {"male": "hu-HU-TamasNeural", "female": "hu-HU-NoemiNeural"},
+    "id": {"male": "id-ID-ArdiNeural", "female": "id-ID-GadisNeural"},
+    "ms": {"male": "ms-MY-OsmanNeural", "female": "ms-MY-YasminNeural"},
+    "ru": {"male": "ru-RU-DmitryNeural", "female": "ru-RU-SvetlanaNeural"},
+    "ja": {"male": "ja-JP-KeitaNeural", "female": "ja-JP-NanamiNeural"},
+    "fi": {"male": "fi-FI-HarriNeural", "female": "fi-FI-NooraNeural"},
+    "fr": {"male": "fr-FR-HenriNeural", "female": "fr-FR-VivienneMultilingualNeural"},
+    "fil": {"male": "fil-PH-AngeloNeural", "female": "fil-PH-BlessicaNeural"},
+    "es": {"male": "es-ES-AlvaroNeural", "female": "es-ES-XimenaNeural"},
+    "th": {"male": "th-TH-NiwatNeural", "female": "th-TH-PremwadeeNeural"},
+    "tr": {"male": "tr-TR-AhmetNeural", "female": "tr-TR-EmelNeural"},
+    "zh-CN": {"male": "zh-CN-YunjianNeural", "female": "zh-CN-XiaoxiaoNeural"},
+    "zh-HK": {"male": "zh-HK-WanLungNeural", "female": "zh-HK-HiuGaaiNeural"},
+    "vi": {"male": "vi-VN-NamMinhNeural", "female": "vi-VN-HoaiMyNeural"},
+    "it": {"male": "it-IT-DiegoNeural", "female": "it-IT-ElsaNeural"},
+}
 # ---------- MODELS ----------
 class TextRequest(BaseModel):
     text: str
+    lang_code: str
+    gender: str
 
 class ChatRequest(BaseModel):
     text: str
@@ -98,28 +121,32 @@ class ImageGenRequest(BaseModel):
     aspect_ratio: Optional[str] = "1:1"
     model_id: Optional[str] = "gemini-2.5-flash-image"
 # ---------- TTS ----------
-async def get_voice(lang_code: str) -> str:
-    """
-    Args:
-        lang_code (str): The ISO language code (e.g., "en", "vi", "ja") used to 
-            select the appropriate voice.
-
-    Returns:
-        str: The name of the selected Edge TTS voice.
-    """
-    global VOICES_CACHE
-    if VOICES_CACHE is None:
-        VOICES_CACHE = await edge_tts.list_voices()
-
-    candidates = [v for v in VOICES_CACHE if v["Locale"].lower().startswith(lang_code.lower())]
-    if not candidates:
-        return "en-US-GuyNeural"
-    male = [v for v in candidates if v.get("Gender", "").lower() == "male"]
-    return (male[0]["Name"] if male else candidates[0]["Name"])
-
 @app.post("/api/text-to-speech")
 async def text_to_speech(req: TextRequest):
     """
+    VOICE_MAP = {
+        "ar": {"male": "ar-SA-HamedNeural", "female": "ar-SA-ZariyahNeural"},
+        "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
+        "en": {"male": "en-US-BrianMultilingualNeural", "female": "en-US-EmmaMultilingualNeural"},
+        "pt": {"male": "pt-PT-DuarteNeural", "female": "pt-PT-RaquelNeural"},
+        "de": {"male": "de-DE-KillianNeural", "female": "de-DE-SeraphinaMultilingualNeural"},
+        "ko": {"male": "ko-KR-HyunsuMultilingualNeural", "female": "ko-KR-SunHiNeural"},
+        "hu": {"male": "hu-HU-TamasNeural", "female": "hu-HU-NoemiNeural"},
+        "id": {"male": "id-ID-ArdiNeural", "female": "id-ID-GadisNeural"},
+        "ms": {"male": "ms-MY-OsmanNeural", "female": "ms-MY-YasminNeural"},
+        "ru": {"male": "ru-RU-DmitryNeural", "female": "ru-RU-SvetlanaNeural"},
+        "ja": {"male": "ja-JP-KeitaNeural", "female": "ja-JP-NanamiNeural"},
+        "fi": {"male": "fi-FI-HarriNeural", "female": "fi-FI-NooraNeural"},
+        "fr": {"male": "fr-FR-HenriNeural", "female": "fr-FR-VivienneMultilingualNeural"},
+        "fil": {"male": "fil-PH-AngeloNeural", "female": "fil-PH-BlessicaNeural"},
+        "es": {"male": "es-ES-AlvaroNeural", "female": "es-ES-XimenaNeural"},
+        "th": {"male": "th-TH-NiwatNeural", "female": "th-TH-PremwadeeNeural"},
+        "tr": {"male": "tr-TR-AhmetNeural", "female": "tr-TR-EmelNeural"},
+        "zh-CN": {"male": "zh-CN-YunjianNeural", "female": "zh-CN-XiaoxiaoNeural"},
+        "zh-HK": {"male": "zh-HK-WanLungNeural", "female": "zh-HK-HiuGaaiNeural"},
+        "vi": {"male": "vi-VN-NamMinhNeural", "female": "vi-VN-HoaiMyNeural"},
+        "it": {"male": "it-IT-DiegoNeural", "female": "it-IT-ElsaNeural"},
+    }
     Generate text-to-speech (TTS) audio and upload to GCS.
 
     Args:
@@ -135,15 +162,11 @@ async def text_to_speech(req: TextRequest):
         return {"error": "Text too long (max 1000 chars)"}
 
     # Detect language and select voice
-    lang_code = detect(text)
-    voice = "en-US-JennyNeural"
-    try:
-        voices = await edge_tts.list_voices()
-        candidates = [v for v in voices if v["Locale"].startswith(lang_code)]
-        if candidates:
-            voice = candidates[0]["Name"]
-    except Exception:
-        pass
+    lang_code = req.lang_code
+    gender = req.gender
+
+    voice_group = VOICE_MAP.get(lang_code, VOICE_MAP["default"])
+    voice = voice_group.get(gender, VOICE_MAP["default"]["female"])
 
     # Generate to memory buffer
     communicate = edge_tts.Communicate(text=text, voice=voice)
@@ -168,7 +191,6 @@ async def text_to_speech(req: TextRequest):
     return {
         "tts_id": tts_id[:8],  # short form for tracking
         "voice_used": voice,
-        "language_detected": lang_code,
         "gcs_url": gcs_url,
         "message": "TTS successfully generated and uploaded to GCS."
     }

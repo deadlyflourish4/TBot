@@ -75,7 +75,7 @@ class AnswerAgent(BaseAgent):
         #     self.memory.append_ai(session_id, base_text)
 
         # Extract potential audio & location data
-        audios = []
+        audios = ""
         location_dict = {}
 
         if isinstance(query_result, list):
@@ -84,8 +84,8 @@ class AnswerAgent(BaseAgent):
                     continue
                 # Extract media/audio URLs
                 for k, v in row.items():
-                    if "mediaurl" in k.lower() and v:
-                        audios.append(v)
+                    if "mediaurl" in k.lower() and v and "EN" in v:
+                        audios = v
                 # Extract location fields
                 sub_id = row.get("subprojectid") or row.get("SubProjectID")
                 loc_val = row.get("location") or row.get("Location")

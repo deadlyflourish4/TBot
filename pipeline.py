@@ -12,6 +12,7 @@ from SystemPrompt.Routeprompt import route_prompt
 from Utils.SessionMemory import SessionMemory
 from sqlalchemy import text
 from langdetect import detect
+from sqlalchemy.exc import ProgrammingError
 
 class DBWrapper:
     """Gói SQLAlchemy engine thành interface có run_query()"""
@@ -106,12 +107,24 @@ class GraphOrchestrator:
         db = DBWrapper(db_engine)
 
         sql_agent = SQLAgent(system_prompt=new_sql_prompt, db=db, api_key=self.api_key, memory=self.memory)
-        result = sql_agent.get_query(state["session_id"], state["user_question"])
+        try:
+            result = sql_agent.get_query(state["session_id"], state["user_question"])
 
-        print(f"[SQL_NODE] Region={region_id} | SQL={result.get('sql_query')}")
-        print(f"[SQL_NODE] Rows={len(result.get('db_result', []))}")
-        print(result["db_result"][:3])
-        state["sql_result"] = result
+            print(f"[SQL_NODE] Region={region_id} | SQL={result.get('sql_query')}")
+            print(f"[SQL_NODE] Rows={len(result.get('db_result', []))}")
+            print(result["db_result"][:3])
+            state["sql_result"] = result
+
+            if not result.get("db_result"):
+                print("[SQL_NODE] No SQL results → fallback to SearchAgent")
+                search_result = self.search_agent.run(state["session_id"], state["user_question"])
+                state["route"] = "search"
+                state["search_result"] = search_result
+        except ProgrammingError as e:
+            print(f"[SQL_NODE ERROR] {e}")
+            search_result = self.search_agent.run(state["session_id"], state["user_question"])
+            state["route"] = "search"
+            state["search_result"] = search_result
         return state
 
 
