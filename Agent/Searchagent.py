@@ -1,132 +1,133 @@
-import requests
-from bs4 import BeautifulSoup
-from langchain.agents import Tool, initialize_agent, AgentType
-from langchain_community.tools import DuckDuckGoSearchRun
 from Agent.BaseAgent import BaseAgent
 from Utils.SessionMemory import SessionMemory
-from langchain_community.tools import Tool
+from bs4 import BeautifulSoup
+import requests
 
 
-class WebScraperTool:
-    """Extract readable text from a URL by removing HTML noise."""
+# ==========================================================
+# DuckDuckGo search (no API key)
+# ==========================================================
+def duckduckgo_search(query: str, max_results: int = 3):
+    url = "https://duckduckgo.com/html/"
+    params = {"q": query}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    def run(self, url: str) -> str:
+    resp = requests.post(url, data=params, headers=headers, timeout=10)
+    resp.raise_for_status()
+
+    results = []
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    for a in soup.select("a.result__a", limit=max_results):
+        href = a.get("href")
+        if href:
+            results.append(href)
+
+    return results
+
+
+# ==========================================================
+# Web scraper
+# ==========================================================
+class WebScraper:
+    def scrape(self, url: str, limit: int = 1200) -> str:
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/91.0.4472.124 Safari/537.36"
-                )
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
+            headers = {"User-Agent": "Mozilla/5.0"}
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(r.text, "html.parser")
             for tag in soup(["script", "style", "footer", "nav", "aside"]):
-                tag.extract()
+                tag.decompose()
 
             text = soup.get_text(separator="\n", strip=True)
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            text = "\n".join(lines)
+            lines = [l.strip() for l in text.splitlines() if len(l.strip()) > 40]
+            return "\n".join(lines)[:limit]
 
-            return text[:1000] + ("...\n[Truncated]" if len(text) > 1000 else "")
         except Exception as e:
-            return f"[Error scraping {url}: {e}]"
+            return f"[Scrape error: {e}]"
 
 
+# ==========================================================
+# SearchAgent
+# ==========================================================
 class SearchAgent(BaseAgent):
     """
     SearchAgent:
-      - Performs factual web searches (DuckDuckGo + Gemini).
-      - Logs user query + LLM result into shared SessionMemory.
-      - Returns unified JSON response for downstream AnswerAgent.
+      - Performs web search (DuckDuckGo)
+      - Scrapes top pages
+      - Summarizes with Ollama (ChatOllama)
+      - Returns unified JSON for AnswerAgent
     """
 
     def __init__(
         self,
         system_prompt: str = None,
-        api_key: str = "",
         memory: SessionMemory = None,
+        model_name: str = "deepseek-r1:8b",
     ):
         super().__init__(
             system_prompt=system_prompt
-            or "You are a helpful travel search assistant.",
-            api_key=api_key,
+            or (
+                "You are a helpful travel search assistant. "
+                "Summarize factual web information clearly and concisely."
+            ),
+            model_name=model_name,
             temperature=0.3,
             memory=memory,
         )
 
-        search_tool = DuckDuckGoSearchRun(name="Search", num_results=3)
-        scraper_tool = WebScraperTool()
+        self.scraper = WebScraper()
 
-        self.tools = [
-            Tool(
-                name="Search",
-                func=search_tool.run,
-                description="Perform web searches for travel destinations, attractions, or events.",
-            ),
-            Tool(
-                name="WebScraper",
-                func=scraper_tool.run,
-                description="Extract clean text content from a webpage.",
-            ),
-        ]
-
-        self.agent = initialize_agent(
-            tools=self.tools,
-            llm=self.llm,
-            agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=False,
-            handle_parsing_errors=True,
-            early_stopping_method="generate",
-        )
-
+    # ======================================================
     def run(self, session_id: str, query: str) -> dict:
-        """Perform search, log to memory, and return structured output."""
         try:
-            # Log user query to memory
-            # if self.memory:
-            #     self.memory.append_user(session_id, query)
+            # 1️⃣ Search URLs
+            urls = duckduckgo_search(query, max_results=3)
 
-            # Perform search
-            raw_text = self.agent.run(query)
-            message_text = raw_text.strip() if raw_text else ""
+            # 2️⃣ Scrape content
+            contents = []
+            for url in urls:
+                text = self.scraper.scrape(url)
+                if text:
+                    contents.append(text)
 
-            # Log AI response
-            # if self.memory:
-            #     self.memory.append_ai(session_id, message_text)
+            # 3️⃣ Build LLM prompt
+            joined_content = "\n\n".join(contents[:3])
+            user_prompt = (
+                f"User question: {query}\n\n"
+                f"Web information:\n{joined_content}\n\n"
+                "Based only on the information above, "
+                "provide a clear, factual, and helpful answer. "
+                "Do not invent facts."
+            )
 
-            # Extract audio links
+            # 4️⃣ Summarize via LLM
+            answer = self.run_llm(session_id, user_prompt)
+
+            # 5️⃣ Extract audio links (simple heuristic)
             audio_links = [
-                token for token in message_text.split()
+                token for token in answer.split()
                 if token.lower().endswith(".mp3")
             ]
 
-            # Trim long output for readability
-            message = (
-                f"According to recent web information:\n\n{message_text[:1500]}"
-                + ("..." if len(message_text) > 1500 else "")
-            )
-
-            # Unified structured output
             return self.format_json(
-                question_old=self.memory.get_history_list(session_id)
-                if self.memory else [query],
-                message=message,
+                question_old=(
+                    self.memory.get_history_list(session_id)
+                    if self.memory else [query]
+                ),
+                message=answer,
                 audio=list(set(audio_links)),
                 location={},
             )
 
         except Exception as e:
-            error_msg = f"Search failed: {e}"
-            # if self.memory:
-            #     self.memory.append_ai(session_id, error_msg)
-
             return self.format_json(
-                question_old=self.memory.get_history_list(session_id)
-                if self.memory else [query],
-                message=error_msg,
+                question_old=(
+                    self.memory.get_history_list(session_id)
+                    if self.memory else [query]
+                ),
+                message=f"Search failed: {e}",
                 audio=[],
                 location={},
             )

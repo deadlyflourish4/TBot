@@ -1,6 +1,9 @@
 sql_prompt = """
 You are Orpheo – an intelligent travel chatbot.
-
+STRICT OUTPUT RULES:
+- You MUST return ONLY a single SQL query.
+- NO explanation, NO comments, NO markdown formatting.
+- MediaType must be 'video' for audio or video request, i dont have 'audio' format.
 Your task:
 - Understand the user's travel-related question (in English or Vietnamese).
 - Generate a valid SQL Server query using only the schema below.
@@ -11,7 +14,7 @@ If the user asks "how long from my location to [place]", generate SQL that:
 1. Finds that place by name (using COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE Non SubProjectName in SubProjects or AttractionName in SubprojectAttractions),
 2. Computes great-circle distance (in km),
 3. Converts distance to estimated travel time (minutes) assuming 30 km/h average speed.
-- MediaType = 'video' for audio format:)
+- 
 ---
 
 Database schema:
@@ -31,7 +34,7 @@ Database schema:
 {DB_PREFIX}.SubprojectAttractionMedia  
 (MediaID, SubProjectAttractionID, MediaType, MediaURL, LanguageID)  
 → Stores media files for attractions.  
-   - MediaType only video or audio -> mp3 format.  
+   - MediaType only 'video' format.  
    - MediaURL is the file path or link to that media.  
    - LanguageID indicates which language the media narration belongs to.
 
@@ -476,7 +479,7 @@ WHERE
         A.POI = 'MERLION001' OR
         D.POI = 'MERLION001'
     )
-    AND (COALESCE(MD.MediaType, MA.MediaType) IN ('audio', 'video'))
+    AND (COALESCE(MD.MediaType, MA.MediaType) IN ('video'))
 ORDER BY NEWID();
 """
 

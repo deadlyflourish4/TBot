@@ -1,122 +1,92 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import (
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    ChatPromptTemplate,
-)
+import logging
+import re
+from langchain_community.chat_models import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
     """
-    Base class for all chatbot agents.
-
-    Responsibilities:
-    - Initialize LLM (Google Gemini)
-    - Integrate with shared SessionMemory (conversation persistence)
-    - Manage prompt construction (system + history + user)
-    - Provide unified output JSON format for downstream components
+    BaseAgent using LangChain + Ollama
+    (Compatible with LangGraph)
     """
 
     def __init__(
         self,
         system_prompt: str,
-        api_key: str,
+        model_name: str = "deepseek-r1:8b",
         temperature: float = 0.2,
         memory=None,
     ):
         self.system_prompt = system_prompt
         self.temperature = temperature
-        self.memory = memory  # shared SessionMemory instance
+        self.memory = memory
 
-        # Initialize Gemini LLM
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+        self.llm = ChatOllama(
+            model=model_name,
             temperature=temperature,
-            max_tokens=None,
-            timeout=None,
-            max_retries=2,
-            google_api_key=api_key,
         )
-
-        # Define base prompt template (system → history → user)
-        self.prompt_template = ChatPromptTemplate.from_messages(
-            [
-                SystemMessagePromptTemplate.from_template(system_prompt),
-                MessagesPlaceholder(variable_name="history"),
-                HumanMessagePromptTemplate.from_template("{query}"),
-            ]
-        )
-
-        # Create LLM pipeline
-        self.pipeline = self.prompt_template | self.llm
 
     # ==========================================================
     # LLM RUNNER
     # ==========================================================
-
     def run_llm(self, session_id: str, query: str) -> str:
-        """
-        Run LLM with global session memory.
+        messages = []
 
-        - Appends user + assistant messages to SessionMemory
-        - Retrieves previous conversation context for continuity
-        """
-        # Record user query
-        # if self.memory:
-        #     self.memory.append_user(session_id, query)
+        # System
+        if self.system_prompt:
+            messages.append(SystemMessage(content=self.system_prompt))
 
-        # Retrieve full chat history for context
-        history_msgs = []
+        # History (giữ đúng logic bạn đang làm)
         if self.memory:
             session = self.memory.get(session_id)
             if session and hasattr(session, "messages"):
-                history_msgs = session.messages
+                for m in session.messages:
+                    if m.type == "human":
+                        messages.append(HumanMessage(content=m.content))
+                    else:
+                        messages.append(AIMessage(content=m.content))
 
-        # Generate response
+        # Current query
+        messages.append(HumanMessage(content=query))
+
         try:
-            response = self.pipeline.invoke({"query": query, "history": history_msgs})
-            text = (response.content or "").strip()
+            resp = self.llm.invoke(messages)
+            text = (resp.content or "").strip()
+
+            if self.memory:
+                self.memory.append_ai(session_id, text)
+
+            return text
+
         except Exception as e:
-            text = f"[Error calling LLM: {e}]"
-
-        # Append assistant response
-        # if self.memory:
-        #     self.memory.append_ai(session_id, text)
-
-        return text
+            logger.error(f"LLM error: {e}")
+            return f"[Error calling LLM: {e}]"
 
     # ==========================================================
-    # SQL CLEANER
+    # SQL CLEANER (GIỮ NGUYÊN)
     # ==========================================================
-
     def clean_sql_code(self, sql_code: str) -> str:
-        """
-        Remove markdown fences and whitespace to get raw SQL string.
-        """
         if not sql_code:
             return ""
-        sql_code = sql_code.replace("```sql", "").replace("```", "").strip()
-        if sql_code.lower().startswith("sql\n"):
-            sql_code = sql_code.split("\n", 1)[1].strip()
+
+        match = re.search(
+            r"```sql\s*(.*?)\s*```",
+            sql_code,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        if match:
+            return match.group(1).strip()
+
+        sql_code = re.sub(r"```.*?```", "", sql_code, flags=re.DOTALL)
+        sql_code = re.sub(r"^\s*sql\s*\n", "", sql_code, flags=re.IGNORECASE)
         return sql_code.strip()
 
     # ==========================================================
-    # STANDARDIZED JSON OUTPUT
+    # OUTPUT FORMAT (GIỮ NGUYÊN)
     # ==========================================================
-
     def format_json(self, question_old, message: str, audio=None, location=None):
-        """
-        Unified output schema for frontend API.
-
-        Example:
-        {
-            "question_old": [...],
-            "message": "Assistant response text",
-            "audio": [...],
-            "location": {...}
-        }
-        """
         return {
             "question_old": question_old or [],
             "message": (message or "").strip(),

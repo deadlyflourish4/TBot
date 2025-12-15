@@ -9,30 +9,27 @@ class RouterAgent(BaseAgent):
           1. 'sql'    → internal database lookup
           2. 'search' → external web query
           3. 'other'  → small talk or unrecognized
-      - Writes both user query and routing result into shared SessionMemory.
-      - Returns unified JSON format for pipeline control.
+      - Uses LLM for classification
+      - Can infer route from short confirmations using memory
     """
 
     def __init__(
         self,
         system_prompt: str,
-        api_key: str,
         memory: SessionMemory = None,
+        model_name: str = "deepseek-r1:8b",
     ):
         super().__init__(
             system_prompt=system_prompt,
-            api_key=api_key,
-            temperature=0,
+            model_name=model_name,
+            temperature=0,   # routing → deterministic
             memory=memory,
         )
 
+    # ==========================================================
     def route(self, session_id: str, query: str) -> dict:
-        """Run routing classifier and store result in memory."""
+        """Run routing classifier and return routing decision."""
         try:
-            # if self.memory:
-            #     self.memory.append_user(session_id, query)
-
-            # Run classifier model
             route_text = self.run_llm(session_id, query)
             route = (route_text or "").strip().lower()
 
@@ -41,22 +38,20 @@ class RouterAgent(BaseAgent):
                 if route.startswith(prefix):
                     route = route.replace(prefix, "").strip()
 
-            # Basic route normalization
-            if any(x in route for x in ["sql", "database", "query"]):
+            # Normalize routing keywords
+            if any(k in route for k in ["sql", "database", "query"]):
                 route = "sql"
-            elif any(x in route for x in ["search", "web", "google"]):
+            elif any(k in route for k in ["search", "web", "google"]):
                 route = "search"
             else:
-                # Handle conversational confirmations
+                # Handle short confirmations
                 if route in ["yes", "ok", "okay", "sure", "yeah", "có", "dạ", "ừ"]:
                     route = self._infer_from_history(session_id)
                 else:
                     route = "other"
 
-            # Log route decision into memory
-            # if self.memory:
-            #     self.memory.append_ai(session_id, f"[Routing] → {route.upper()}")
-            print(f"THIS QUESTION LEAD TO ROUTE: {route}")
+            print(f"[ROUTER] ROUTE = {route.upper()}")
+
             return {
                 "question_old": (
                     self.memory.get_history_list(session_id)
@@ -71,9 +66,6 @@ class RouterAgent(BaseAgent):
 
         except Exception as e:
             error_msg = f"Routing failed: {e}"
-            # if self.memory:
-            #     self.memory.append_ai(session_id, error_msg)
-
             return {
                 "question_old": (
                     self.memory.get_history_list(session_id)
@@ -86,13 +78,20 @@ class RouterAgent(BaseAgent):
                 "route": "other",
             }
 
+    # ==========================================================
     def _infer_from_history(self, session_id: str) -> str:
-        """Infer previous context when user only replies with short confirmation."""
+        """
+        Infer previous context when user replies with short confirmation
+        (e.g., 'ok', 'có', 'ừ').
+        """
         if not self.memory:
             return "other"
 
-        history = self.memory.get(session_id).messages
-        for msg in reversed(history):
+        session = self.memory.get(session_id)
+        if not session or not session.messages:
+            return "other"
+
+        for msg in reversed(session.messages):
             if msg.type == "ai":
                 content = msg.content.lower()
                 if "sql" in content:
