@@ -944,7 +944,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
+
+# from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # =========================================================
@@ -1024,6 +1025,8 @@ INTENT_RULES = {
 # =========================================================
 class SemanticRouter:
     def __init__(self):
+        from sentence_transformers import SentenceTransformer
+
         model_name = "intfloat/multilingual-e5-large"
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🚀 Loading Semantic Router Model: {model_name} on {device.upper()}")
@@ -1046,12 +1049,16 @@ class SemanticRouter:
                 "passage: nghe audio guide",
                 "passage: xem video du lịch",
                 "passage: bật nhạc thư giãn",
+                "passage: có audio Dinh Độc Lập không",
+                "passage: mở audio về Dinh Độc Lập",
             ],
             2: [
                 "passage: giá vé bao nhiêu",
                 "passage: lịch sử chùa Thiên Mụ",
                 "passage: thông tin về địa đạo Củ Chi",
                 "passage: giờ mở cửa bảo tàng",
+                "passage: giới thiệu Dinh Độc Lập",
+                "passage: thông tin về Dinh Độc Lập",
             ],
             3: [
                 "passage: xin chào",

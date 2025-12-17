@@ -19,7 +19,7 @@ class AnswerAgent(BaseAgent):
         system_prompt: str = "",
         memory: Optional[SessionMemory] = None,
         model_name: str = "gpt-oss:20b",  # Model tối ưu cho 16GB VRAM
-        temperature: float = 0.5,  # 0.5 để cân bằng giữa sáng tạo và chính xác
+        temperature: float = 0.3,  # 0.5 để cân bằng giữa sáng tạo và chính xác
     ):
         # Thiết lập System Prompt mặc định nếu không có
         if not system_prompt:
@@ -120,13 +120,13 @@ class AnswerAgent(BaseAgent):
         if not raw_data or (isinstance(raw_data, dict) and raw_data.get("error")):
             return "Xin lỗi bạn nha, hiện tại mình chưa tìm thấy thông tin chi tiết về địa điểm này trong hệ thống. Bạn thử hỏi địa điểm khác xem sao nhé!"
 
-        # 2. Nếu raw_data đã có sẵn message chuẩn (từ logic SQL), dùng luôn cho nhanh
-        if (
-            isinstance(raw_data, dict)
-            and "message" in raw_data
-            and intent_label in ["direction", "media"]
-        ):
-            return raw_data["message"]
+        # # 2. Nếu raw_data đã có sẵn message chuẩn (từ logic SQL), dùng luôn cho nhanh
+        # if (
+        #     isinstance(raw_data, dict)
+        #     and "message" in raw_data
+        #     and intent_label in ["direction", "media", "info"]
+        # ):
+        #     return raw_data["message"]
 
         # 3. Prompt "Nhập vai" hướng dẫn viên
         prompt = f"""
@@ -145,14 +145,14 @@ class AnswerAgent(BaseAgent):
         - Không đưa ra thông tin ngoài DATA.
 
         [QUY TẮC THEO INTENT]
-        - direction: nói tên địa điểm + mô tả vị trí (không in lat/lon số).
-        - media: nếu status=not_found -> xin lỗi + gợi ý “bạn muốn xem ảnh/giới thiệu không?”; 
-                nếu có url -> nói “mình sẽ mở <media_type> ...”.
+        - direction: giới thiệu sơ + mô tả vị trí (không in lat/lon số).
+        - media: giới thiệu sơ + nếu status=not_found -> xin lỗi + gợi ý “bạn muốn xem ảnh/giới thiệu không?”; 
+                nếu có url -> nói “mình sẽ mở <media_type> ...”, không dẫn link vô câu trả lời.
         - info: tóm tắt 2–3 ý chính từ Introduction/Location nếu có.
         - count: nói rõ con số total_count.
         - chitchat: trả lời xã giao ngắn.
 
-        [CÂU TRẢ LỜI]:
+        [CÂU TRẢ LỜI]: {raw_data}
         """
 
         try:

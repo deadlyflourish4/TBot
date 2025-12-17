@@ -1,9 +1,10 @@
 # Database/db_manager.py
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-import urllib
 import threading
 import time
+import urllib
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 
 class MultiDBManager:
@@ -28,11 +29,11 @@ class MultiDBManager:
             "password": "Tinhyeu75@",
         },
         2: {
-            "server": "112.78.2.36",
-            "database": "cit19844_guidepass",
-            "prefix": "cit19844_guidepass",
-            "username": "cit19844_guidepass",
-            "password": "443725@Hiep",
+            "server": "34.155.247.184",
+            "database": "cityguidepass_cloud",
+            "prefix": "dbo",
+            "username": "sqlserver",
+            "password": "Tinhyeu75@",
         },
         3: {
             "server": "112.78.2.156",
@@ -44,7 +45,9 @@ class MultiDBManager:
         # 4: {...}
     }
 
-    def __init__(self, default_driver="ODBC Driver 18 for SQL Server", idle_timeout=30 * 60):
+    def __init__(
+        self, default_driver="ODBC Driver 18 for SQL Server", idle_timeout=30 * 60
+    ):
         """
         Args:
             default_driver (str): tên ODBC driver mặc định.
@@ -96,7 +99,9 @@ class MultiDBManager:
             )
             self.engines[region_id] = engine
             self.sessions[region_id] = sessionmaker(bind=engine)
-            print(f"[DBManager] ✅ Created engine for region {region_id}: {cfg['server']}")
+            print(
+                f"[DBManager] ✅ Created engine for region {region_id}: {cfg['server']}"
+            )
 
         self.last_used[region_id] = time.time()
         return self.engines[region_id]
@@ -119,11 +124,15 @@ class MultiDBManager:
             for region_id, last in list(self.last_used.items()):
                 if now - last > self.idle_timeout:
                     cfg = self.DB_MAP.get(region_id, {})
-                    print(f"[DBManager] 💤 Disposing idle engine for region {region_id} ({cfg.get('server')})")
+                    print(
+                        f"[DBManager] 💤 Disposing idle engine for region {region_id} ({cfg.get('server')})"
+                    )
                     try:
                         self.engines[region_id].dispose()
                     except Exception as e:
-                        print(f"[DBManager] ⚠️ Dispose failed for region {region_id}: {e}")
+                        print(
+                            f"[DBManager] ⚠️ Dispose failed for region {region_id}: {e}"
+                        )
                     finally:
                         self.engines.pop(region_id, None)
                         self.sessions.pop(region_id, None)
@@ -133,4 +142,3 @@ class MultiDBManager:
     def __start_cleanup_thread(self):
         t = threading.Thread(target=self.__cleanup_idle_engines, daemon=True)
         t.start()
-

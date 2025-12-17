@@ -1,7 +1,0 @@
-tunnel: ollama-tunnel
-credentials-file: /etc/cloudflared/ollama-tunnel.json
-
-ingress:
-  - hostname: llm.yourdomain.com
-    service: http://ollama:11434
-  - service: http_status:404

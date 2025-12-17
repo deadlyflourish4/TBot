@@ -1,17 +1,19 @@
 import json
 import re
+import time
 import unicodedata
 from typing import Any, Dict, List, Optional
-import time
 
 import numpy as np
+
 # Import các module hệ thống
 from Agent.Answeragent import AnswerAgent
 from Database.db import MultiDBManager
 from sqlalchemy import text
 from SystemPrompt.SemanticRouter import SemanticRouter
-from Utils.SessionMemory import SessionMemory
 from Utils.Reflection import Reflection
+from Utils.SessionMemory import SessionMemory
+
 
 # ==========================================================
 # 🛠️ DB WRAPPER
@@ -115,7 +117,7 @@ class GraphOrchestrator:
         prefix = self.db_manager.DB_MAP[ctx["region_id"]]["prefix"]
 
         sql = f"""
-        SELECT SubProjectName, Introduction, SubProjectImage, Location
+        SELECT SubProjectName, Introduction
         FROM {prefix}.SubProjects
         WHERE SubProjectID = {target_place['id']}
         """
@@ -134,7 +136,8 @@ class GraphOrchestrator:
         SELECT TOP 1
             COALESCE(MD.MediaURL, MA.MediaURL) AS URL,
             COALESCE(MD.MediaType, MA.MediaType) AS Type,
-            S.SubProjectName
+            S.SubProjectName,
+            S.Introduction
         FROM {prefix}.SubProjects AS S
         LEFT JOIN {prefix}.SubprojectAttractions AS A
             ON S.SubProjectID = A.SubProjectID
@@ -167,13 +170,13 @@ class GraphOrchestrator:
 
         if target_place:
             sql = f"""
-            SELECT SubProjectName, Location
+            SELECT SubProjectName, Location, Introduction
             FROM {prefix}.SubProjects
             WHERE SubProjectID = {target_place['id']}
             """
         elif ctx["lat"]:
             sql = f"""
-            SELECT TOP 1 SubProjectName, Location
+            SELECT TOP 1 SubProjectName, Location, Introduction
             FROM {prefix}.SubProjects
             WHERE ProjectID = {ctx['project_id']}
             AND Location IS NOT NULL
@@ -241,8 +244,12 @@ class GraphOrchestrator:
         }
 
         # -------- 1️⃣ ROUTER --------
-        rewritten_question = self.reflection(self.memory, ctx["session_id"])
-        intent_res = self.router.classify_intent(rewritten_question)
+        self.memory.append_user(ctx["session_id"], user_question)
+
+        # rewritten_question = self.reflection(self.memory, ctx["session_id"])
+        # intent_res = self.router.classify_intent(rewritten_question)
+        intent_res = self.router.classify_intent(user_question)
+
         intent_id = intent_res["id"]
         intent_label = intent_res["label"]
 
@@ -313,7 +320,7 @@ class GraphOrchestrator:
         # -------- 5️⃣ LLM RESPONSE --------
         final_message = self.synthesize_response(user_question, raw_data, intent_label)
 
-        self.memory.append_user(ctx["session_id"], user_question)
+        # self.memory.append_user(ctx["session_id"], user_question)
         self.memory.append_ai(ctx["session_id"], final_message)
         total_ms = round((time.perf_counter() - start_time) * 1000, 2)
         return {
@@ -321,9 +328,5 @@ class GraphOrchestrator:
             "confidence": intent_res["score"],
             "message": final_message,
             "data": raw_data,
-            "metrics": {
-                "total_ms": total_ms
-            }
+            "metrics": {"total_ms": total_ms},
         }
-
-

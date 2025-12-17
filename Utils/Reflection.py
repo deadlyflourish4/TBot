@@ -1,4 +1,6 @@
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.messages import HumanMessage, SystemMessage
+
 
 class Reflection:
     def __init__(self, llm, max_turns: int = 5):
@@ -8,9 +10,7 @@ class Reflection:
     # --------------------------------------------------
     # Convert LangChain memory → prompt string
     # --------------------------------------------------
-    def _format_from_session_memory(
-        self, history: InMemoryChatMessageHistory
-    ) -> str:
+    def _format_from_session_memory(self, history: InMemoryChatMessageHistory) -> str:
         messages = history.messages[-self.max_turns * 2 :]
         lines = []
 
@@ -28,28 +28,29 @@ class Reflection:
 
         history_string = self._format_from_session_memory(history)
 
-        prompt = {
-            "role": "user",
-            "content": f"""
-            Bạn là một module viết lại câu hỏi cho hệ thống RAG.
+        system_prompt = """
+Bạn là một module viết lại câu hỏi cho hệ thống RAG.
 
-            Nhiệm vụ:
-            - Dựa trên lịch sử hội thoại bên dưới
-            - Viết lại câu hỏi CUỐI CÙNG thành một câu hỏi ĐỘC LẬP, rõ nghĩa
-            - KHÔNG trả lời câu hỏi
-            - KHÔNG thêm thông tin mới
-            - Nếu câu hỏi đã độc lập, hãy giữ nguyên
+Nhiệm vụ:
+- Dựa trên lịch sử hội thoại bên dưới
+- Viết lại câu hỏi CUỐI CÙNG thành một câu hỏi ĐỘC LẬP, rõ nghĩa
+- KHÔNG trả lời câu hỏi
+- KHÔNG thêm thông tin mới
+- Nếu câu hỏi đã độc lập, hãy giữ nguyên
+""".strip()
 
-            Lịch sử hội thoại:
-            {history_string}
+        user_prompt = f"""
+Lịch sử hội thoại:
+{history_string}
 
-            Câu hỏi độc lập:
-            """
-        }
+Câu hỏi độc lập:
+""".strip()
 
-        completion = self.llm.generate_content([prompt])
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
 
-        # Normalize output
-        if hasattr(completion, "text"):
-            return completion.text.strip()
-        return str(completion).strip()
+        completion = self.llm.invoke(messages)
+
+        return completion.content.strip()
