@@ -2,6 +2,7 @@ import json
 import re
 import unicodedata
 from typing import Any, Dict, List, Optional
+import time
 
 import numpy as np
 # Import các module hệ thống
@@ -10,7 +11,7 @@ from Database.db import MultiDBManager
 from sqlalchemy import text
 from SystemPrompt.SemanticRouter import SemanticRouter
 from Utils.SessionMemory import SessionMemory
-
+from Utils.Reflection import Reflection
 
 # ==========================================================
 # 🛠️ DB WRAPPER
@@ -40,6 +41,7 @@ class GraphOrchestrator:
 
         # LLM Generator
         self.answer_agent = AnswerAgent(system_prompt="", memory=self.memory)
+        self.reflection = Reflection(llm=self.answer_agent.llm)
 
     # ------------------------------------------------------
     # 🔥 CORE: SINH LỜI THOẠI AI
@@ -221,6 +223,7 @@ class GraphOrchestrator:
     # 🚀 MAIN PIPELINE
     # ======================================================
     def run(self, session_id, user_question, user_location, project_id, region_id=0):
+        start_time = time.perf_counter()
         ctx = {
             "session_id": f"{session_id}_{region_id}",
             "lat": (
@@ -238,7 +241,8 @@ class GraphOrchestrator:
         }
 
         # -------- 1️⃣ ROUTER --------
-        intent_res = self.router.classify_intent(user_question)
+        rewritten_question = self.reflection(self.memory, ctx["session_id"])
+        intent_res = self.router.classify_intent(rewritten_question)
         intent_id = intent_res["id"]
         intent_label = intent_res["label"]
 
@@ -311,12 +315,15 @@ class GraphOrchestrator:
 
         self.memory.append_user(ctx["session_id"], user_question)
         self.memory.append_ai(ctx["session_id"], final_message)
-
+        total_ms = round((time.perf_counter() - start_time) * 1000, 2)
         return {
             "type": intent_label,
             "confidence": intent_res["score"],
             "message": final_message,
             "data": raw_data,
+            "metrics": {
+                "total_ms": total_ms
+            }
         }
 
 
