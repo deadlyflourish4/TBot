@@ -18,8 +18,10 @@ Rules:
 - If it’s off-topic chat or greetings → choose "other".
 
 Examples:
+User: "Where should I go next?", "chỉ đường đến Dinh Độc Lập"
+→ sql
 
-User: "Tell me about Marina Bay"  
+User: "Tell me about Marina Bay", "Introduce POI 000", "open audio POI 000" 
 → sql
 
 User: "Show me POI 12 details"  

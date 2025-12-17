@@ -2,45 +2,49 @@
 import io
 import os
 import uuid
+from datetime import datetime, timedelta
 from io import BytesIO
 from os import getenv
-from typing import Optional, List
-from datetime import datetime
+from typing import List, Optional
 
-# ===== 2. Third-party imports =====
-from fastapi import FastAPI, Body, HTTPException, File, UploadFile, Form, Depends
-
-from Security.middleware import jwt_middleware
-from datetime import timedelta
-from pydantic import BaseModel
-from langdetect import detect
-from deep_translator import GoogleTranslator
-from PIL import Image
 import edge_tts
-from google import genai
-from google.genai.types import GenerateContentConfig, Modality, Part, ImageConfig
-from langdetect import detect
-# ===== 3. Local project imports =====
-from pipeline import GraphOrchestrator
+
 # from Azure_blob.blob import AzureBlobUploader
 from Chat.chatsession import ChatManager
 from Database.db import MultiDBManager
-from GCP.storage import GCStorage
-from Security.middleware import jwt_middleware
-from fastapi.security import HTTPBearer
-from fastapi.openapi.utils import get_openapi
+from deep_translator import GoogleTranslator
+
+# ===== 2. Third-party imports =====
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+from fastapi.security import HTTPBearer
+from GCP.storage import GCStorage
+from google import genai
+from google.genai.types import GenerateContentConfig, ImageConfig, Modality, Part
+from langdetect import detect
+from PIL import Image
+
+# ===== 3. Local project imports =====
+from pipeline import GraphOrchestrator
+from pydantic import BaseModel
+from Security.middleware import jwt_middleware
 
 security = HTTPBearer()
-app = FastAPI(title="Orpheo Multi-Region API", swagger_ui_parameters={"persistAuthorization": True})
+app = FastAPI(
+    title="Orpheo Multi-Region API",
+    swagger_ui_parameters={"persistAuthorization": True},
+)
 app.middleware("http")(jwt_middleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],            
-    allow_headers=["*"],            
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -51,17 +55,14 @@ def custom_openapi():
         routes=app.routes,
     )
     openapi_schema["components"]["securitySchemes"] = {
-        "BearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT"
-        }
+        "BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
     }
     for path in openapi_schema["paths"].values():
         for method in path.values():
             method.setdefault("security", [{"BearerAuth": []}])
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 # --- deps ---
@@ -77,9 +78,15 @@ tts_buffers = {}
 VOICE_MAP = {
     "ar": {"male": "ar-SA-HamedNeural", "female": "ar-SA-ZariyahNeural"},
     "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
-    "en": {"male": "en-US-BrianMultilingualNeural", "female": "en-US-EmmaMultilingualNeural"},
+    "en": {
+        "male": "en-US-BrianMultilingualNeural",
+        "female": "en-US-EmmaMultilingualNeural",
+    },
     "pt": {"male": "pt-PT-DuarteNeural", "female": "pt-PT-RaquelNeural"},
-    "de": {"male": "de-DE-KillianNeural", "female": "de-DE-SeraphinaMultilingualNeural"},
+    "de": {
+        "male": "de-DE-KillianNeural",
+        "female": "de-DE-SeraphinaMultilingualNeural",
+    },
     "ko": {"male": "ko-KR-HyunsuMultilingualNeural", "female": "ko-KR-SunHiNeural"},
     "hu": {"male": "hu-HU-TamasNeural", "female": "hu-HU-NoemiNeural"},
     "id": {"male": "id-ID-ArdiNeural", "female": "id-ID-GadisNeural"},
@@ -97,11 +104,14 @@ VOICE_MAP = {
     "vi": {"male": "vi-VN-NamMinhNeural", "female": "vi-VN-HoaiMyNeural"},
     "it": {"male": "it-IT-DiegoNeural", "female": "it-IT-ElsaNeural"},
 }
+
+
 # ---------- MODELS ----------
 class TextRequest(BaseModel):
     text: str
     lang_code: str
     gender: str
+
 
 class ChatRequest(BaseModel):
     text: str
@@ -109,6 +119,7 @@ class ChatRequest(BaseModel):
     project_id: int
     region_id: int
     session_id: str = None
+
 
 class ImageGenRequest(BaseModel):
     content_uri: str
@@ -120,6 +131,8 @@ class ImageGenRequest(BaseModel):
     file_name: str
     aspect_ratio: Optional[str] = "1:1"
     model_id: Optional[str] = "gemini-2.5-flash-image"
+
+
 # ---------- TTS ----------
 @app.post("/api/text-to-speech")
 async def text_to_speech(req: TextRequest):
@@ -192,8 +205,9 @@ async def text_to_speech(req: TextRequest):
         "tts_id": tts_id[:8],  # short form for tracking
         "voice_used": voice,
         "gcs_url": gcs_url,
-        "message": "TTS successfully generated and uploaded to GCS."
+        "message": "TTS successfully generated and uploaded to GCS.",
     }
+
 
 @app.post("/api/upload-tts")
 async def upload_tts(gcs_url: str, upload: bool = True):
@@ -217,13 +231,11 @@ async def upload_tts(gcs_url: str, upload: bool = True):
             return {"message": f"TTS file deleted: {gcs_url}"}
         else:
             # No action needed — already uploaded
-            return {
-                "message": "TTS file retained successfully.",
-                "public_url": gcs_url
-            }
+            return {"message": "TTS file retained successfully.", "public_url": gcs_url}
 
     except Exception as e:
         return {"error": f"Operation failed: {str(e)}"}
+
 
 @app.post("/api/delete-tts")
 def delete_tts(url: str = Body(..., embed=True)):
@@ -232,6 +244,7 @@ def delete_tts(url: str = Body(..., embed=True)):
         return {"message": "Deleted successfully", "url": url, "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- TRANSLATE ----------
 @app.post("/api/text-translate")
@@ -257,14 +270,14 @@ async def chatbot_response(req: ChatRequest):
     if not session:
         session = chat_sessions.create_session(req.region_id, session_id=session_id)
         session_id = session.session_id
-        
+
     region_id = req.region_id
 
     response_text = bot.run(
         session_id=session_id,
         user_question=req.text,
         user_location=req.user_geography,
-        project_id = req.project_id,
+        project_id=req.project_id,
         region_id=region_id,
     )
 
@@ -273,13 +286,12 @@ async def chatbot_response(req: ChatRequest):
 
     return response_text
 
+
 @app.post("/api/generate-image")
-def generate_image(
-    req: ImageGenRequest
-):
+def generate_image(req: ImageGenRequest):
     """
     Generate an image based on one content image and multiple style reference images using Vertex AI (Gemini/Imagen).
-    
+
     Args:
         content_uri: GCS URI of the main content image.
         style_uris: List of GCS URIs for style reference images.
@@ -292,7 +304,9 @@ def generate_image(
     PROJECT_ID = "guidepassasiacloud"
     LOCATION = "us-central1"
 
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./GCP/guidepassasiacloud-250f74bc75bb.json"
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
+        "./GCP/guidepassasiacloud-250f74bc75bb.json"
+    )
     client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 
     content_uri = req.content_uri.strip('"').strip("'")
@@ -337,4 +351,3 @@ def generate_image(
 
     # print(f" Image uploaded: {url}")
     return url
-

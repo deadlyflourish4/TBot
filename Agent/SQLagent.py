@@ -1,7 +1,7 @@
 from Agent.BaseAgent import BaseAgent
 from Database.db import MultiDBManager
 from Utils.SessionMemory import SessionMemory
-
+import re
 
 class SQLAgent(BaseAgent):
     """
@@ -16,7 +16,7 @@ class SQLAgent(BaseAgent):
         system_prompt: str,
         db: MultiDBManager,
         memory: SessionMemory = None,
-        model_name: str = "deepseek-r1:8b",
+        model_name: str = "gpt-oss:20b",
     ):
         super().__init__(
             system_prompt=system_prompt,
@@ -36,7 +36,9 @@ class SQLAgent(BaseAgent):
             # 1️⃣ Generate SQL via LLM
             sql_text = self.run_llm(session_id, query)
             sql_text = self.clean_sql_code(sql_text)
-
+            def replace_audio_with_video(sql_text: str) -> str:
+                return re.sub(r'audio', 'video', sql_text, flags=re.IGNORECASE)
+            sql_text = replace_audio_with_video(sql_text)
             print("\n========== GENERATED SQL ==========")
             print(sql_text)
             print("===================================\n")

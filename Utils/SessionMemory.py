@@ -1,5 +1,6 @@
 from langchain_core.chat_history import InMemoryChatMessageHistory
 
+
 class SessionMemory:
     """
     Shared session memory for all chatbot agents.
@@ -65,4 +66,5 @@ class SessionMemory:
 
     def clear_all(self):
         """Delete all sessions."""
+        self.sessions.clear()
         self.sessions.clear()

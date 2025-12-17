@@ -1,6 +1,8 @@
 sql_prompt = """
-You are Orpheo – an intelligent travel chatbot.
-
+STRICT OUTPUT RULES:
+- ONLY GENERATE SQL QUERY.
+- NO explanation, NO comments, NO markdown formatting.
+- only have MediaType = 'video' for audio or video request, no 'audio' type.
 Your task:
 - Understand the user's travel-related question (in English or Vietnamese).
 - Generate a valid SQL Server query using only the schema below.
@@ -8,10 +10,10 @@ Your task:
 - Only subprojects have location data.
 - If the media URL is the subproject, randomly select one media URL from that subproject in the SQL, otherwwise return the URL bescause subprojectattractions can have only one media URLs.
 If the user asks "how long from my location to [place]", generate SQL that: 
-1. Finds that place by name (using COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE Non SubProjectName in SubProjects or AttractionName in SubprojectAttractions),
+1. Finds that place by name (using COLLATE Latin1_General_100_CI_AI LIKE Non SubProjectName in SubProjects or AttractionName in SubprojectAttractions),
 2. Computes great-circle distance (in km),
 3. Converts distance to estimated travel time (minutes) assuming 30 km/h average speed.
-- MediaType = 'video' for audio format:)
+- 
 ---
 
 Database schema:
@@ -31,7 +33,7 @@ Database schema:
 {DB_PREFIX}.SubprojectAttractionMedia  
 (MediaID, SubProjectAttractionID, MediaType, MediaURL, LanguageID)  
 → Stores media files for attractions.  
-   - MediaType only video or audio -> mp3 format.  
+   - MediaType only 'video' format.  
    - MediaURL is the file path or link to that media.  
    - LanguageID indicates which language the media narration belongs to.
 
@@ -48,48 +50,34 @@ MediaID, SubProjectAttractionDetailID, MediaType, MediaURL, LanguageID
 Rules for generating SQL:
 
 # prompt_samples.py
-Show attractions inside a famous POI
-User: "Ở Marina Bay có gì chơi?"
+# Show attractions (and their details) inside a famous place
+User: "Ở Marina Bay có gì chơi?", "Giới thiệu chung, chi tiết về Marina Bay", "Một số thông tin về Marina Bay"
 
 SQL:
 SELECT
     A.SubProjectAttractionID,
     A.AttractionName,
-    A.Introduction,
-    A.AttractionImage
-FROM {DB_PREFIX}.SubprojectAttractions AS A
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Marina Bay%' OR
-     S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Marina Bay%' OR
-     A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Marina Bay%' OR
-     A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Marina Bay%')
-ORDER BY A.SortOrder;
-
-
-Find SubProject or Attraction by keyword
-User: "Tôi muốn xem khu Chinatown."
-
-SQL:
-SELECT TOP 5
-    COALESCE(S.SubProjectName, A.AttractionName) AS Name,
-    COALESCE(S.Introduction, A.Introduction) AS Introduction,
-    COALESCE(S.SubProjectImage, A.AttractionImage) AS Image,
-    S.SubProjectID,
-    A.SubProjectAttractionID
+    A.Introduction AS AttractionIntro,
+    A.AttractionImage,
+    D.SubProjectAttractionDetailID,
+    D.DetailName,
+    D.Introduction AS DetailIntro,
+    D.DetailImage
 FROM {DB_PREFIX}.SubProjects AS S
-FULL OUTER JOIN {DB_PREFIX}.SubprojectAttractions AS A 
+LEFT JOIN {DB_PREFIX}.SubprojectAttractions AS A 
     ON S.SubProjectID = A.SubProjectID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetails AS D
+    ON A.SubProjectAttractionID = D.SubProjectAttractionID
 WHERE
-    S.ProjectID = {ProjectID} AND
-    (
-        S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%' OR
-        S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%' OR
-        A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%' OR
-        A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%'
+    S.ProjectID = {ProjectID}
+    AND (
+        S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Marina Bay%' OR
+        A.AttractionName COLLATE Latin1_General_100_CI_AI LIKE N'%Marina Bay%' OR
+        D.DetailName COLLATE Latin1_General_100_CI_AI LIKE N'%Marina Bay%'
     )
-ORDER BY COALESCE(A.SortOrder, S.SubProjectName);
+ORDER BY 
+    A.SortOrder,
+    D.SortOrder;
 
 Query attractions inside a subproject by name
 User: "Những địa điểm nên đến ở Little India."
@@ -104,10 +92,10 @@ FROM {DB_PREFIX}.SubprojectAttractions AS A
 JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
 WHERE
     S.ProjectID = {ProjectID} AND
-    (S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Little India%' OR
-     S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Little India%' OR
-     A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Little India%' OR
-     A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Little India%')
+    (S.POI COLLATE Latin1_General_100_CI_AI LIKE N'%Little India%' OR
+     S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Little India%' OR
+     A.POI COLLATE Latin1_General_100_CI_AI LIKE N'%Little India%' OR
+     A.AttractionName COLLATE Latin1_General_100_CI_AI LIKE N'%Little India%')
 ORDER BY A.SortOrder;
 
 
@@ -118,6 +106,7 @@ SQL:
 SELECT TOP 5
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -142,6 +131,7 @@ SQL:
 SELECT TOP 10
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -159,159 +149,53 @@ HAVING Distance_km <= 5
 ORDER BY Distance_km ASC;
 
 
-Query a random video of a subproject
-User: "Cho tôi video giới thiệu về Singapore River."
+# Query a random video of a subproject (including attractions and details)
+User: "Cho tôi video giới thiệu về Phòng Nội Các.", "Mở audio giới thiệu về Phòng Nội Các", "Có video/audio giới thiệu nào về phòng nội các không?", "mở audio, video giơi thiệu Phòng Nội Các"
 
 SQL:
 SELECT TOP 1
     M.MediaURL,
     M.MediaType,
     M.LanguageID
-FROM {DB_PREFIX}.SubprojectAttractionMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Singapore River%' OR S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Singapore River%') AND
-    M.MediaType = 'video'
-ORDER BY NEWID();
-
-
-Query audio guide for a specific attraction
-User: "Nghe hướng dẫn về Merlion Park."
-
-SQL:
-SELECT
-    M.MediaURL,
-    M.MediaType,
-    M.LanguageID
-FROM {DB_PREFIX}.SubprojectAttractionsMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Merlion Park%' OR A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Merlion Park%' OR
-     S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Merlion Park%' OR S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Merlion Park%') AND
-    M.MediaType = 'video';
-
-Query random SubProject or Attraction
-User: "Gợi ý một điểm tham quan ngẫu nhiên ở Singapore."
-
-SQL:
-SELECT TOP 1
-    COALESCE(A.AttractionName, S.SubProjectName) AS Name,
-    COALESCE(A.Introduction, S.Introduction) AS Introduction,
-    COALESCE(A.AttractionImage, S.SubProjectImage) AS Image
 FROM {DB_PREFIX}.SubProjects AS S
-FULL OUTER JOIN {DB_PREFIX}.SubprojectAttractions AS A 
+LEFT JOIN {DB_PREFIX}.SubprojectAttractions AS A 
     ON S.SubProjectID = A.SubProjectID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionMedia AS M1
+    ON A.SubProjectAttractionID = M1.SubProjectAttractionID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetails AS D
+    ON A.SubProjectAttractionID = D.SubProjectAttractionID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetailsMedia AS M
+    ON D.SubProjectAttractionDetailID = M.SubProjectAttractionDetailID
 WHERE
     S.ProjectID = {ProjectID}
+    AND (
+        S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Phòng Nội Các%' OR
+        A.AttractionName COLLATE Latin1_General_100_CI_AI LIKE N'%Phòng Nội Các%' OR
+        D.DetailName COLLATE Latin1_General_100_CI_AI LIKE N'%Phòng Nội Các%'
+    )
+    AND (
+        (M.MediaType = 'video' AND M.MediaURL IS NOT NULL)
+        OR (M1.MediaType = 'video' AND M1.MediaURL IS NOT NULL)
+    )
 ORDER BY NEWID();
 
-
-Query introduction by name (check both SubProjects and Attractions)
-User: "Giới thiệu ngắn về Boat Quay."
-
-SQL:
-SELECT TOP 1
-    COALESCE(A.AttractionName, S.SubProjectName) AS Name,
-    COALESCE(A.Introduction, S.Introduction) AS Introduction,
-    COALESCE(A.AttractionImage, S.SubProjectImage) AS Image
-FROM {DB_PREFIX}.SubProjects AS S
-FULL OUTER JOIN {DB_PREFIX}.SubprojectAttractions AS A 
-    ON S.SubProjectID = A.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (
-        S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Boat Quay%' OR
-        S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Boat Quay%' OR
-        A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Boat Quay%' OR
-        A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Boat Quay%'
-    );
-
-Query subproject introduction only
-User: "Giới thiệu khu Clarke Quay."
-
-SQL:
-SELECT TOP 1
-    S.SubProjectName,
-    S.Introduction
-FROM {DB_PREFIX}.SubProjects AS S
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Clarke Quay%' OR S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Clarke Quay%');
-
-
-Query count of attractions in a subproject
 User: "Chinatown có bao nhiêu điểm tham quan?"
 
 SQL:
 SELECT
-    COUNT(A.SubProjectAttractionID) AS AttractionCount
-FROM {DB_PREFIX}.SubprojectAttractions AS A
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%' OR S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%');
-
-Query all media available for a SubProject or Attraction
-User: "Tất cả video giới thiệu về Sentosa."
-
-SQL:
-SELECT DISTINCT
-    M.MediaURL,
-    M.MediaType,
-    M.LanguageID,
-    COALESCE(A.AttractionName, S.SubProjectName) AS Name,
-    COALESCE(A.AttractionImage, S.SubProjectImage) AS Image
-FROM {DB_PREFIX}.SubprojectAttractionMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A 
-    ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S 
-    ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (
-        S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Sentosa%' OR
-        S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Sentosa%' OR
-        A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Sentosa%' OR
-        A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Sentosa%'
-    ) AND
-    M.MediaType = 'video';
-
-
-
-Query top 3 attractions by SortOrder
-User: "3 điểm tham quan đầu tiên ở Singapore River."
-
-SQL:
-SELECT TOP 3
-    A.AttractionName,
-    A.Introduction
-FROM {DB_PREFIX}.SubprojectAttractions AS A
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Singapore River%' OR S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Singapore River%')
-ORDER BY A.SortOrder ASC;
-
-User: "Gioi thieu xac uop xom cai"
-SQL:
-SELECT TOP 1
-    COALESCE(S.SubProjectName, A.AttractionName) AS ParentArea,
-    COALESCE(A.AttractionName, S.SubProjectName) AS RelatedPlace,
-    COALESCE(S.Introduction, A.Introduction) AS Introduction
+    COUNT(DISTINCT A.SubProjectAttractionID) 
+    + COUNT(DISTINCT D.SubProjectAttractionDetailID) AS TotalAttractionCount
 FROM {DB_PREFIX}.SubProjects AS S
-FULL OUTER JOIN {DB_PREFIX}.SubprojectAttractions AS A 
+LEFT JOIN {DB_PREFIX}.SubprojectAttractions AS A 
     ON S.SubProjectID = A.SubProjectID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetails AS D
+    ON A.SubProjectAttractionID = D.SubProjectAttractionID
 WHERE
-    S.ProjectID = {ProjectID} AND
-    (
-        S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%xac uop xom cai%' OR
-        S.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%xac uop xom cai%' OR
-        A.AttractionName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%xac uop xom cai%' OR
-        A.POI COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%xac uop xom cai%'
+    S.ProjectID = {ProjectID}
+    AND (
+        S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Chinatown%' OR
+        A.AttractionName COLLATE Latin1_General_100_CI_AI LIKE N'%Chinatown%' OR
+        D.DetailName COLLATE Latin1_General_100_CI_AI LIKE N'%Chinatown%'
     );
 
 ### Example 1:
@@ -322,6 +206,7 @@ Expected SQL:
 SELECT TOP 5
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -348,6 +233,7 @@ Expected SQL:
 SELECT TOP 5
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -360,31 +246,46 @@ SELECT TOP 5
         SIN(RADIANS(CAST(LEFT(S.Location, CHARINDEX(',', S.Location) - 1) AS FLOAT)))
     ) AS Distance_km
 FROM {DB_PREFIX}.SubProjects AS S
-WHERE S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Singapore River%'
+WHERE S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Singapore River%'
 ORDER BY Distance_km ASC;
 
 
-### Example 3:
 User question:
 "Tôi nên đi đâu tiếp theo sau khi thăm Chinatown?"
 
-Expected SQL:
+SQL:
+WITH Anchor AS (
+    SELECT TOP 1
+        CAST(LEFT(S.Location, CHARINDEX(',', S.Location) - 1) AS FLOAT) AS AnchorLat,
+        CAST(SUBSTRING(S.Location, CHARINDEX(',', S.Location) + 1, LEN(S.Location)) AS FLOAT) AS AnchorLon
+    FROM {DB_PREFIX}.SubProjects AS S
+    WHERE
+        S.ProjectID = {ProjectID}
+        AND S.Location IS NOT NULL
+        AND S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Chinatown%'
+)
 SELECT TOP 5
-    S.SubProjectID,
-    S.SubProjectName,
-    S.Location,
+    S2.SubProjectID,
+    S2.SubProjectName,
+    S.Introduction,
+    S2.Location,
     6371 * ACOS(
-        COS(RADIANS({USER_LAT})) *
-        COS(RADIANS(CAST(LEFT(S.Location, CHARINDEX(',', S.Location) - 1) AS FLOAT))) *
+        COS(RADIANS(A.AnchorLat)) *
+        COS(RADIANS(CAST(LEFT(S2.Location, CHARINDEX(',', S2.Location) - 1) AS FLOAT))) *
         COS(
-            RADIANS(CAST(SUBSTRING(S.Location, CHARINDEX(',', S.Location) + 1, LEN(S.Location)) AS FLOAT))
-            - RADIANS({USER_LON})
+            RADIANS(CAST(SUBSTRING(S2.Location, CHARINDEX(',', S2.Location) + 1, LEN(S2.Location)) AS FLOAT))
+            - RADIANS(A.AnchorLon)
         ) +
-        SIN(RADIANS({USER_LAT})) *
-        SIN(RADIANS(CAST(LEFT(S.Location, CHARINDEX(',', S.Location) - 1) AS FLOAT)))
+        SIN(RADIANS(A.AnchorLat)) *
+        SIN(RADIANS(CAST(LEFT(S2.Location, CHARINDEX(',', S2.Location) - 1) AS FLOAT)))
     ) AS Distance_km
-FROM {DB_PREFIX}.SubProjects AS S
-WHERE S.SubProjectName NOT COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Chinatown%'
+FROM {DB_PREFIX}.SubProjects AS S2
+CROSS JOIN Anchor AS A
+WHERE
+    S2.ProjectID = {ProjectID}
+    AND S2.Location IS NOT NULL
+    -- loại chính Chinatown ra:
+    AND S2.SubProjectName COLLATE Latin1_General_100_CI_AI NOT LIKE N'%Chinatown%'
 ORDER BY Distance_km ASC;
 
 User question:
@@ -394,6 +295,7 @@ Expected SQL:
 SELECT TOP 5
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -436,6 +338,7 @@ Show me tourist places less than 2 km away.
 SELECT TOP 5
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -465,11 +368,12 @@ HAVING
 ORDER BY Distance_km ASC;
 
 Example 9:
-User question: "Từ vị trí của tôi đến Dinh Độc Lập hết bao lâu?"
+User question: "Từ vị trí của tôi đến Dinh Độc Lập hết bao lâu?", "Chỉ đường đến Dinh Độc Lập"
 Expected SQL:
 SELECT TOP 1
     S.SubProjectID,
     S.SubProjectName,
+    S.Introduction,
     S.Location,
     6371 * ACOS(
         COS(RADIANS({USER_LAT})) *
@@ -493,181 +397,96 @@ SELECT TOP 1
         SIN(RADIANS(CAST(LEFT(S.Location, CHARINDEX(',', S.Location) - 1) AS FLOAT)))
     ) / 30 * 60) AS Estimated_Minutes
 FROM {DB_PREFIX}.SubProjects AS S
-WHERE S.SubProjectName COLLATE SQL_Latin1_General_Cp1253_CI_AI LIKE N'%Dinh Độc Lập%'
+WHERE S.SubProjectName COLLATE Latin1_General_100_CI_AI LIKE N'%Dinh Độc Lập%'
 ORDER BY Distance_km ASC;
 
 
-Show subproject by POI ID
-User: "Giới thiệu điểm có POI = 'SGP001'."
+User: "Giới thiệu điểm có POI = '000'.", "POI 000", "giới thiệu POI 000", "Chi tiết POI 000"
 
 SQL:
 SELECT TOP 1
     S.SubProjectID,
-    S.SubProjectName,
+    S.SubProjectName AS Name,
     S.Introduction,
-    S.SubProjectImage
+    S.SubProjectImage AS Image,
+    S.Location,
+    'SubProject' AS Source
 FROM {DB_PREFIX}.SubProjects AS S
 WHERE
-    S.ProjectID = {ProjectID} AND
-    S.POI = 'SGP001';
+    S.ProjectID = {ProjectID}
+    AND S.POI = '000'
+
+UNION ALL
+
+SELECT TOP 1
+    S.SubProjectID,
+    D.DetailName AS Name,
+    D.Introduction,
+    D.DetailImage AS Image,
+    S.Location,
+    'AttractionDetail' AS Source
+FROM {DB_PREFIX}.SubprojectAttractionDetails AS D
+JOIN {DB_PREFIX}.SubprojectAttractions AS A
+    ON D.SubProjectAttractionID = A.SubProjectAttractionID
+JOIN {DB_PREFIX}.SubProjects AS S
+    ON A.SubProjectID = S.SubProjectID
+WHERE
+    S.ProjectID = {ProjectID}
+    AND D.POI = '000';
 
 
-Show attractions inside a subproject by POI
 User: "Liệt kê các điểm tham quan trong POI = 'SGP002'."
 
 SQL:
-SELECT
+SELECT DISTINCT
+    A.SubProjectAttractionID,
     A.AttractionName,
-    A.Introduction,
-    A.AttractionImage
-FROM {DB_PREFIX}.SubprojectAttractions AS A
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
+    A.Introduction AS AttractionIntro,
+    A.AttractionImage,
+    D.SubProjectAttractionDetailID,
+    D.DetailName,
+    D.Introduction AS DetailIntro,
+    D.DetailImage
+FROM {DB_PREFIX}.SubProjects AS S
+LEFT JOIN {DB_PREFIX}.SubprojectAttractions AS A
+    ON S.SubProjectID = A.SubProjectID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetails AS D
+    ON A.SubProjectAttractionID = D.SubProjectAttractionID
 WHERE
-    S.ProjectID = {ProjectID} AND
-    S.POI = 'SGP002'
-ORDER BY A.SortOrder;
+    S.ProjectID = {ProjectID}
+    AND (
+        S.POI = 'SGP002' OR
+        A.POI = 'SGP002' OR
+        D.POI = 'SGP002'
+    )
+ORDER BY 
+    A.SortOrder,
+    D.SortOrder;
 
-
-Get attraction details by POI code
-User: "Xem chi tiết điểm có mã POI='RIVER045'."
-
-SQL:
-SELECT TOP 1
-    A.AttractionName,
-    A.Introduction,
-    A.AttractionImage
-FROM {DB_PREFIX}.SubprojectAttractions AS A
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    A.POI = 'RIVER045';
-
-
-Get media for a specific attraction POI
 User: "Phát audio cho POI='MERLION001'."
 
 SQL:
-SELECT
-    M.MediaURL,
-    M.MediaType,
-    M.LanguageID
-FROM {DB_PREFIX}.SubprojectAttractionMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    A.POI = 'MERLION001' AND
-    M.MediaType = 'video';
-
-
-Get video for a SubProject POI
-User: "Video giới thiệu POI='CHINATOWN_01'."
-
-SQL:
 SELECT TOP 1
-    M.MediaURL,
-    M.MediaType,
-    M.LanguageID
-FROM {DB_PREFIX}.SubprojectAttractionMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
+    COALESCE(MD.MediaURL, MA.MediaURL) AS MediaURL,
+    COALESCE(MD.MediaType, MA.MediaType) AS MediaType,
+    COALESCE(MD.LanguageID, MA.LanguageID) AS LanguageID
+FROM {DB_PREFIX}.SubProjects AS S
+LEFT JOIN {DB_PREFIX}.SubprojectAttractions AS A
+    ON S.SubProjectID = A.SubProjectID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetails AS D
+    ON A.SubProjectAttractionID = D.SubProjectAttractionID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionMedia AS MA
+    ON A.SubProjectAttractionID = MA.SubProjectAttractionID
+LEFT JOIN {DB_PREFIX}.SubprojectAttractionDetailsMedia AS MD
+    ON D.SubProjectAttractionDetailID = MD.SubProjectAttractionDetailID
 WHERE
-    S.ProjectID = {ProjectID} AND
-    S.POI = 'CHINATOWN_01' AND
-    M.MediaType = 'video'
+    S.ProjectID = {ProjectID}
+    AND (
+        S.POI = 'MERLION001' OR
+        A.POI = 'MERLION001' OR
+        D.POI = 'MERLION001'
+    )
+    AND (COALESCE(MD.MediaType, MA.MediaType) IN ('video'))
 ORDER BY NEWID();
-
-
-Get both SubProject + Attraction names from POI
-User: "Cho biết điểm có POI='BOATQAY_03' thuộc khu nào."
-
-SQL:
-SELECT TOP 1
-    S.SubProjectName,
-    A.AttractionName
-FROM {DB_PREFIX}.SubProjects AS S
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI = 'BOATQAY_03' OR A.POI = 'BOATQAY_03');
-
-
-Get introduction for any POI (auto-detect level)
-User: "Giới thiệu POI='RIVER_EDGE_07'."
-
-SQL:
-SELECT TOP 1
-    COALESCE(S.SubProjectName, A.AttractionName) AS Name,
-    COALESCE(S.Introduction, A.Introduction) AS Introduction
-FROM {DB_PREFIX}.SubProjects AS S
-FULL OUTER JOIN {DB_PREFIX}.SubprojectAttractions AS A ON S.SubProjectID = A.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI = 'RIVER_EDGE_07' OR A.POI = 'RIVER_EDGE_07');
-
-
-Get location for a POI (SubProject only)
-User: "Tọa độ của POI='CLARKEQAY_01'."
-
-SQL:
-SELECT
-    S.SubProjectName,
-    S.Location
-FROM {DB_PREFIX}.SubProjects AS S
-WHERE
-    S.ProjectID = {ProjectID} AND
-    S.POI = 'CLARKEQAY_01';
-
-
-Get nearby attractions of a POI
-User: "Những điểm gần POI='MARINA_02' trong bán kính 2 km."
-
-SQL:
-SELECT TOP 5
-    S2.SubProjectID,
-    S2.SubProjectName,
-    6371 * ACOS(
-        COS(RADIANS(CAST(LEFT(S1.Location, CHARINDEX(',', S1.Location) - 1) AS FLOAT))) *
-        COS(RADIANS(CAST(LEFT(S2.Location, CHARINDEX(',', S2.Location) - 1) AS FLOAT))) *
-        COS(
-            RADIANS(CAST(SUBSTRING(S2.Location, CHARINDEX(',', S2.Location) + 1, LEN(S2.Location)) AS FLOAT)) -
-            RADIANS(CAST(SUBSTRING(S1.Location, CHARINDEX(',', S1.Location) + 1, LEN(S1.Location)) AS FLOAT))
-        ) +
-        SIN(RADIANS(CAST(LEFT(S1.Location, CHARINDEX(',', S1.Location) - 1) AS FLOAT))) *
-        SIN(RADIANS(CAST(LEFT(S2.Location, CHARINDEX(',', S2.Location) - 1) AS FLOAT)))
-    ) AS Distance_km
-FROM {DB_PREFIX}.SubProjects AS S1
-CROSS JOIN {DB_PREFIX}.SubProjects AS S2
-WHERE
-    S1.ProjectID = {ProjectID} AND
-    S2.ProjectID = {ProjectID} AND
-    S1.POI = 'MARINA_02' AND
-    S1.SubProjectID <> S2.SubProjectID
-HAVING Distance_km <= 2
-ORDER BY Distance_km ASC;
-
-USER: POI 1500
-SQL:
-SELECT TOP 1
-    COALESCE(S.SubProjectName, A.AttractionName) AS Name,
-    COALESCE(S.Introduction, A.Introduction) AS Introduction
-FROM dbo.SubProjects AS S
-FULL OUTER JOIN dbo.SubprojectAttractions AS A ON S.SubProjectID = A.SubProjectID
-WHERE
-    S.ProjectID = 1002 AND
-    (S.POI = '1500' OR A.POI = '1500');
-
-Open audio POI 1800
-SELECT
-    M.MediaURL,
-    M.MediaType,
-    M.LanguageID
-FROM {DB_PREFIX}.SubprojectAttractionMedia AS M
-JOIN {DB_PREFIX}.SubprojectAttractions AS A ON M.SubProjectAttractionID = A.SubProjectAttractionID
-JOIN {DB_PREFIX}.SubProjects AS S ON A.SubProjectID = S.SubProjectID
-WHERE
-    S.ProjectID = {ProjectID} AND
-    (S.POI = '1800' OR A.POI = '1800') AND
-    M.MediaType = 'video';
 """
 
