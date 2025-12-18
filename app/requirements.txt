@@ -1,0 +1,58 @@
+# ===============================
+# LangChain ecosystem
+# ===============================
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langgraph
+
+# ===============================
+# LLM / Embedding
+# ===============================
+torch
+transformers
+sentence-transformers
+scikit-learn
+numpy
+
+# ===============================
+# FastAPI & ASGI
+# ===============================
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ===============================
+# Database
+# ===============================
+sqlalchemy
+pyodbc
+
+# ===============================
+# Google / Cloud
+# ===============================
+google-genai
+google-cloud-storage
+
+# ===============================
+# NLP / Utils
+# ===============================
+langdetect
+deep-translator
+ddgs
+edge-tts==7.2.1
+pillow
+
+# ===============================
+# Security
+# ===============================
+PyJWT
+pwdlib[argon2]
+
+# ===============================
+# Infra / Utils
+# ===============================
+requests
+python-dotenv
+pydantic
