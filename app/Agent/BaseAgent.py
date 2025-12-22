@@ -2,6 +2,7 @@ import logging
 import re
 from langchain_community.chat_models import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class BaseAgent:
         self.llm = ChatOllama(
             model=model_name,
             temperature=temperature,
+            base_url=os.getenv("OLLAMA_BASE_URL"),
         )
 
     # ==========================================================
@@ -72,9 +74,7 @@ class BaseAgent:
             return ""
 
         match = re.search(
-            r"```sql\s*(.*?)\s*```",
-            sql_code,
-            flags=re.IGNORECASE | re.DOTALL
+            r"```sql\s*(.*?)\s*```", sql_code, flags=re.IGNORECASE | re.DOTALL
         )
         if match:
             return match.group(1).strip()
