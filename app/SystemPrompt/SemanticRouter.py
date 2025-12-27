@@ -1027,7 +1027,7 @@ class SemanticRouter:
     def __init__(self):
         from sentence_transformers import SentenceTransformer
 
-        model_name = "intfloat/multilingual-e5-large"
+        model_name = "anansupercuteeeee/multilingual-travelling"
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🚀 Loading Semantic Router Model: {model_name} on {device.upper()}")
         self.last_intent_id = None

@@ -221,7 +221,33 @@ class GraphOrchestrator:
             if len(name) >= 4 and name in q:
                 return True
         return False
+    def format_public_response(
+        self,
+        final_message: str,
+        raw_data: dict | None,
+        intent_label: str,
+        session_id: str
+    ) -> dict:
+        """
+        Chuẩn hóa response trả về cho client.
+        Chỉ dùng 4 field: Message, location, audio, session_id
+        """
 
+        location = None
+        audio = None
+
+        if intent_label == "direction" and raw_data:
+            location = raw_data.get("Location"),
+
+        if intent_label == "media" and raw_data and raw_data.get("media_type") == "audio":
+            audio = raw_data.get("url"),
+
+        return {
+            "Message": final_message,
+            "location": location,
+            "audio": audio,
+            "session_id": session_id,
+        }
     # ======================================================
     # 🚀 MAIN PIPELINE
     # ======================================================
@@ -323,10 +349,13 @@ class GraphOrchestrator:
         # self.memory.append_user(ctx["session_id"], user_question)
         self.memory.append_ai(ctx["session_id"], final_message)
         total_ms = round((time.perf_counter() - start_time) * 1000, 2)
-        return {
-            "type": intent_label,
-            "confidence": intent_res["score"],
-            "message": final_message,
-            "data": raw_data,
-            "metrics": {"total_ms": total_ms},
-        }
+
+        public_response = self.format_public_response(
+            final_message=final_message,
+            raw_data=raw_data,
+            intent_label=intent_label,
+            session_id=ctx["session_id"],
+        )
+        return public_response
+
+    
