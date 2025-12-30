@@ -15,6 +15,7 @@ transformers
 sentence-transformers
 scikit-learn
 numpy
+sentencepiece
 
 # ===============================
 # FastAPI & ASGI

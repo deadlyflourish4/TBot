@@ -1,14 +1,20 @@
 import numpy as np
 from sqlalchemy import text
+from Location_resolution.ner import NERService
 
 
 class LocationStore:
-    def __init__(self, embedder, db_manager):
+    def __init__(self, ner_service: NERService, embedder, db_manager):
+        self.ner_service = ner_service
         self.embedder = embedder
         self.db_manager = db_manager
-
-        # (region_id, subproject_id) -> {names, embeddings}
         self._store = {}
+        self.cache = {}
+
+        print("📍 LocationStore initialized")
+
+    def extract_ner(self, text: str):
+        return self.ner_service.extract_locations(text)
 
     def preload(self):
         """
@@ -42,11 +48,20 @@ class LocationStore:
                 "embeddings": embs,
             }
 
-    def match(self, region_id: int, subproject_id: int, ner_location: str):
-        key = (region_id, subproject_id)
+    def match(self, region_id: int, project_id: int, ner_location: str):
+        print(
+            f"[LocationStore.match] region={region_id}, "
+            f"project={project_id}, ner='{ner_location}'"
+        )
+
+        key = (int(region_id), int(project_id))
         data = self._store.get(key)
 
-        if not data or not ner_location:
+        if not data:
+            print(f"[LocationStore.match] ❌ No cache for key={key}")
+            return None
+
+        if not ner_location:
             return None
 
         q_emb = self.embedder.encode(
@@ -54,14 +69,16 @@ class LocationStore:
             normalize_embeddings=True,
         )
 
-        scores = np.dot(data["embeddings"], q_emb)
+        scores = data["embeddings"] @ q_emb
         idx = int(scores.argmax())
         score = float(scores[idx])
+
+        print(f"[LocationStore.match] best='{data['names'][idx]}' score={score:.4f}")
 
         if score < 0.6:
             return None
 
         return {
-            "name": data["names"][idx],
+            "subproject_name": data["names"][idx],
             "score": score,
         }

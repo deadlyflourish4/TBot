@@ -13,9 +13,8 @@ from Agent.SemanticRouter import SemanticRouter
 from Utils.SessionMemory import SessionMemory
 
 # from Utils.Reflection import Reflection
+from Location_resolution.ner import NERService
 from Location_resolution.store import LocationStore
-from Location_resolution.preload import preload_location_bundles
-from Utils.ner import ner_extract_locations
 
 
 # ==========================================================
@@ -54,10 +53,14 @@ class Pipeline:
         # inject embedder
         self.semantic_router = SemanticRouter(self.embedder)
 
-        # preload ALL location to RAM
+        # 🔹 init NER 1 lần
+        self.ner_service = NERService()
+
+        # 🔹 preload ALL location to RAM
         self.location_store = LocationStore(
             embedder=self.embedder,
             db_manager=self.db_manager,
+            ner_service=self.ner_service,  # ✅ inject vào đây
         )
         self.location_store.preload()
 
@@ -211,24 +214,11 @@ class GraphOrchestrator:
 
         self.dbg("🧠 INTENT:", intent_label, intent_res.get("score"))
 
-        # 2️⃣ FOLLOW-UP
-        if intent_id == 5:
-            follow_of = self.memory.get_ctx(ctx["session_id"], "last_intent")
-            msg = f"Bạn muốn làm rõ thêm về {follow_of} không?"
-            self.memory.append_ai(ctx["session_id"], msg)
-
-            return {
-                "Message": msg,
-                "location": None,
-                "audio": None,
-                "session_id": ctx["session_id"],
-            }
-
         # 3️⃣ TARGET PLACE (CHUẨN – RAM ONLY)
         target_place = None
-        if intent_id in [0, 1, 2, 4]:
-            ner_locs = ner_extract_locations(user_question)
-
+        if intent_id in [0, 1, 2]:
+            ner_locs = self.location_store.extract_ner(user_question)
+            print(f"NER location: {ner_locs}")
             if ner_locs:
                 target_place = self.location_store.match(
                     region_id=region_id,
@@ -254,8 +244,6 @@ class GraphOrchestrator:
             raw_data = self.run_media(ctx, target_place)
         elif intent_id == 2:
             raw_data = self.run_info(ctx, target_place)
-        elif intent_id == 4:
-            raw_data = self.run_count(ctx, target_place)
         else:
             raw_data = self.run_chitchat(ctx)
 
@@ -263,11 +251,7 @@ class GraphOrchestrator:
 
         # 5️⃣ RESPONSE
         if intent_label == "direction" and raw_data and raw_data.get("Location"):
-            final_message = (
-                f"{raw_data.get('SubProjectName')} nằm tại "
-                f"{raw_data.get('Location')}. "
-                "Bạn có thể dùng Google Maps để chỉ đường chi tiết."
-            )
+            final_message = "Bạn có thể bấm nút bên dưới để xem cách đi"
         else:
             final_message = self.synthesize_response(
                 user_question, raw_data, intent_label

@@ -1,21 +1,22 @@
 from sqlalchemy import text
 
 
-def preload_location_bundles(db_manager) -> dict:
+def preload(self):
     """
-    Return:
-      {
-        (region_id, subproject_id): [name1, name2, ...]
+    Cache structure:
+    {
+      (region_id, project_id): {
+          "names": [...],
+          "embeddings": np.ndarray
       }
+    }
     """
-    bundles = {}
-
-    for region_id, cfg in db_manager.DB_MAP.items():
-        engine = db_manager.get_engine(region_id)
+    for region_id, cfg in self.db_manager.DB_MAP.items():
+        engine = self.db_manager.get_engine(region_id)
         prefix = cfg["prefix"]
 
         sql = f"""
-        SELECT SubProjectID, SubProjectName
+        SELECT ProjectID, SubProjectName
         FROM {prefix}.SubProjects
         WHERE SubProjectName IS NOT NULL
         """
@@ -24,7 +25,15 @@ def preload_location_bundles(db_manager) -> dict:
             rows = conn.execute(text(sql)).fetchall()
 
         for r in rows:
-            key = (region_id, r.SubProjectID)
-            bundles.setdefault(key, []).append(r.SubProjectName)
+            key = (int(region_id), int(r.ProjectID))
+            self._store.setdefault(key, {"names": [], "embeddings": None})
+            self._store[key]["names"].append(r.SubProjectName)
 
-    return bundles
+    # embed once
+    for key, data in self._store.items():
+        data["embeddings"] = self.embedder.encode(
+            [f"passage: {n}" for n in data["names"]],
+            normalize_embeddings=True,
+        )
+
+    print("📍 LocationStore preloaded into RAM")
