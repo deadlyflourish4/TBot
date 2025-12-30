@@ -4,12 +4,18 @@ import unicodedata
 from typing import Dict, List
 
 from sqlalchemy import text
+import torch
+from sentence_transformers import SentenceTransformer
 
 from Agent.Answeragent import AnswerAgent
 from Database.db import MultiDBManager
-from Project.Repo.TBot.app.Agent.SemanticRouter import SemanticRouter
+from Agent.SemanticRouter import SemanticRouter
 from Utils.SessionMemory import SessionMemory
-from Utils.Reflection import Reflection
+
+# from Utils.Reflection import Reflection
+from Location_resolution.store import LocationStore
+from Location_resolution.preload import preload_location_bundles
+from Utils.ner import ner_extract_locations
 
 
 # ==========================================================
@@ -35,6 +41,29 @@ class DBWrapper:
         return rows
 
 
+class Pipeline:
+    def __init__(self):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_name = "anansupercuteeeee/multilingual-traveling"
+
+        print(f"🚀 Loading shared embedder: {model_name} on {device.upper()}")
+        self.embedder = SentenceTransformer(model_name, device=device)
+
+        self.db_manager = MultiDBManager()
+
+        # inject embedder
+        self.semantic_router = SemanticRouter(self.embedder)
+
+        # preload ALL location to RAM
+        self.location_store = LocationStore(
+            embedder=self.embedder,
+            db_manager=self.db_manager,
+        )
+        self.location_store.preload()
+
+        print("📍 LocationStore preloaded into RAM")
+
+
 # ==========================================================
 # 🎮 GRAPH ORCHESTRATOR (FINAL)
 # ==========================================================
@@ -42,11 +71,17 @@ class GraphOrchestrator:
     def __init__(self, debug: bool = True):
         self.debug = debug
         self.memory = SessionMemory()
-        self.db_manager = MultiDBManager()
-        self.router = SemanticRouter()
+
+        # 🔹 pipeline init 1 lần
+        self.pipeline = Pipeline()
+
+        # 🔹 dùng shared components
+        self.router = self.pipeline.semantic_router
+        self.location_store = self.pipeline.location_store
+        self.db_manager = self.pipeline.db_manager
 
         self.answer_agent = AnswerAgent(system_prompt="", memory=self.memory)
-        self.reflection = Reflection(llm=self.answer_agent.llm)
+        # self.reflection = Reflection(llm=self.answer_agent.llm)
 
     # ---------------- DEBUG ----------------
     def dbg(self, *args):
@@ -62,29 +97,6 @@ class GraphOrchestrator:
         except Exception as e:
             self.dbg("❌ LLM ERROR:", e)
             return str(raw_data)
-
-    # ======================================================
-    # DB CANDIDATES
-    # ======================================================
-    def get_db_candidates(self, project_id, region_id):
-        engine = self.db_manager.get_engine(region_id)
-        db = DBWrapper(engine, debug=self.debug)
-        prefix = self.db_manager.DB_MAP[region_id]["prefix"]
-
-        sql = f"""
-        SELECT SubProjectID, SubProjectName, POI
-        FROM {prefix}.SubProjects
-        WHERE ProjectID = {project_id}
-        """
-        rows = db.run_query(sql)
-
-        cands = []
-        for r in rows:
-            if r.get("SubProjectName"):
-                cands.append({"id": r["SubProjectID"], "name": r["SubProjectName"]})
-            if r.get("POI"):
-                cands.append({"id": r["SubProjectID"], "name": r["POI"]})
-        return cands
 
     # ======================================================
     # WORKERS (DEBUG HÀM + SQL)
@@ -103,7 +115,7 @@ class GraphOrchestrator:
         sql = f"""
         SELECT SubProjectName, Location, Introduction
         FROM {prefix}.SubProjects
-        WHERE SubProjectID = {target_place['id']}
+        WHERE SubProjectName = N'{target_place['name']}'
         """
         rows = db.run_query(sql)
         self.dbg("📦 run_direction rows =", rows)
@@ -123,7 +135,7 @@ class GraphOrchestrator:
         sql = f"""
         SELECT SubProjectName, Introduction
         FROM {prefix}.SubProjects
-        WHERE SubProjectID = {target_place['id']}
+        WHERE SubProjectName = N'{target_place['name']}'
         """
         rows = db.run_query(sql)
         self.dbg("📦 run_info rows =", rows)
@@ -154,7 +166,7 @@ class GraphOrchestrator:
             ON A.SubProjectAttractionID = D.SubProjectAttractionID
         LEFT JOIN {prefix}.SubprojectAttractionDetailsMedia AS MD
             ON D.SubProjectAttractionDetailID = MD.SubProjectAttractionDetailID
-        WHERE S.SubProjectID = {target_place['id']}
+        WHERE S.SubProjectName = N'{target_place['name']}'
         """
         rows = db.run_query(sql)
         self.dbg("📦 run_media rows =", rows)
@@ -175,32 +187,6 @@ class GraphOrchestrator:
     def run_chitchat(self, ctx):
         self.dbg("🛠️ [WORKER] run_chitchat")
         return {"context": "social"}
-
-    # ======================================================
-    # NORMALIZE + EXPLICIT CHECK
-    # ======================================================
-    def _normalize(self, s: str) -> str:
-        s = (s or "").lower().strip()
-        s = unicodedata.normalize("NFKD", s)
-        s = "".join(c for c in s if not unicodedata.combining(c))
-        s = re.sub(r"[^a-z0-9\s]", " ", s)
-        return re.sub(r"\s+", " ", s).strip()
-
-    def _mentions_place_explicitly(
-        self, user_question: str, candidates: List[Dict[str, str]]
-    ) -> bool:
-        q = self._normalize(user_question)
-        if not q:
-            return False
-
-        if re.search(r"\b(o do|do|kia|nay|o day)\b", q):
-            return False
-
-        for c in candidates:
-            name = self._normalize(c.get("name", ""))
-            if len(name) >= 4 and name in q:
-                return True
-        return False
 
     # ======================================================
     # 🚀 MAIN PIPELINE
@@ -238,27 +224,30 @@ class GraphOrchestrator:
                 "session_id": ctx["session_id"],
             }
 
-        # 3️⃣ TARGET PLACE
+        # 3️⃣ TARGET PLACE (CHUẨN – RAM ONLY)
         target_place = None
         if intent_id in [0, 1, 2, 4]:
-            candidates = self.get_db_candidates(project_id, region_id)
-            has_explicit = self._mentions_place_explicitly(user_question, candidates)
+            ner_locs = ner_extract_locations(user_question)
 
-            last_place = self.memory.get_ctx(ctx["session_id"], "last_target_place")
+            if ner_locs:
+                target_place = self.location_store.match(
+                    region_id=region_id,
+                    subproject_id=project_id,
+                    ner_location=ner_locs[0],
+                )
 
-            if not has_explicit and last_place:
-                target_place = last_place
-            else:
-                target_place = self.router.find_target_place(user_question, candidates)
-                if not target_place and last_place:
-                    target_place = last_place
+            # fallback: dùng context cũ
+            if not target_place:
+                target_place = self.memory.get_ctx(
+                    ctx["session_id"], "last_target_place"
+                )
 
         if target_place:
             self.memory.set_ctx(ctx["session_id"], "last_target_place", target_place)
 
         self.dbg("🎯 TARGET:", target_place)
 
-        # 4️⃣ WORKER ROUTE
+        # 4️⃣ WORKER ROUTE (GIỮ NGUYÊN LOGIC SQL)
         if intent_id == 0:
             raw_data = self.run_direction(ctx, target_place)
         elif intent_id == 1:
@@ -286,7 +275,7 @@ class GraphOrchestrator:
 
         self.memory.append_ai(ctx["session_id"], final_message)
 
-        # 6️⃣ FORMAT OUTPUT
+        # 6️⃣ FORMAT OUTPUT (GIỮ NGUYÊN)
         location = None
         audio = None
 

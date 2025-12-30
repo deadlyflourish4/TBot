@@ -17,20 +17,12 @@ INTENT_LABELS = {
     1: "media",
     2: "info",
     3: "chitchat",
-    4: "count",  # nếu sau này train thêm
-    5: "follow_up",  # xử lý bằng context, không embedding
 }
 
 
 class SemanticRouter:
-    def __init__(self):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_name = "anansupercuteeeee/multilingual-traveling"
-
-        print(
-            f"🚀 Loading Intent Router (embedding-only): {model_name} on {device.upper()}"
-        )
-        self.model = SentenceTransformer(model_name, device=device)
+    def __init__(self, embedder: SentenceTransformer):
+        self.model = embedder
 
         self.last_intent_id = None
         self.last_target_place = None
@@ -75,17 +67,17 @@ class SemanticRouter:
                 "method": "empty",
             }
 
-        # -------------------------------------------------
-        # FOLLOW-UP (rất nhẹ – optional)
-        # -------------------------------------------------
-        if self.last_intent_id is not None and len(text.split()) <= 4:
-            return {
-                "id": 5,
-                "label": "follow_up",
-                "score": 1.0,
-                "method": "context",
-                "follow_of": INTENT_LABELS[self.last_intent_id],
-            }
+        # # -------------------------------------------------
+        # # FOLLOW-UP (rất nhẹ – optional)
+        # # -------------------------------------------------
+        # if self.last_intent_id is not None and len(text.split()) <= 4:
+        #     return {
+        #         "id": 5,
+        #         "label": "follow_up",
+        #         "score": 1.0,
+        #         "method": "context",
+        #         "follow_of": INTENT_LABELS[self.last_intent_id],
+        #     }
 
         # -------------------------------------------------
         # EMBEDDING INTENT CLASSIFICATION
@@ -114,22 +106,22 @@ class SemanticRouter:
             "method": "embedding",
         }
 
-    # =====================================================
-    # PLACE MATCH (GIỮ NGUYÊN)
-    # =====================================================
-    def find_target_place(
-        self, user_query: str, candidates: List[Dict[str, str]]
-    ) -> Optional[Dict]:
-        if not candidates:
-            return None
+    # # =====================================================
+    # # PLACE MATCH (GIỮ NGUYÊN)
+    # # =====================================================
+    # def find_target_place(
+    #     self, user_query: str, candidates: List[Dict[str, str]]
+    # ) -> Optional[Dict]:
+    #     if not candidates:
+    #         return None
 
-        texts = [f"passage: {c['name']}" for c in candidates]
-        q_vec = self.model.encode(f"query: {user_query}", normalize_embeddings=True)
-        c_vecs = self.model.encode(texts, normalize_embeddings=True)
+    #     texts = [f"passage: {c['name']}" for c in candidates]
+    #     q_vec = self.model.encode(f"query: {user_query}", normalize_embeddings=True)
+    #     c_vecs = self.model.encode(texts, normalize_embeddings=True)
 
-        sims = cosine_similarity([q_vec], c_vecs)[0]
-        idx = int(np.argmax(sims))
+    #     sims = cosine_similarity([q_vec], c_vecs)[0]
+    #     idx = int(np.argmax(sims))
 
-        if sims[idx] > 0.78:
-            return candidates[idx]
-        return None
+    #     if sims[idx] > 0.78:
+    #         return candidates[idx]
+    #     return None
