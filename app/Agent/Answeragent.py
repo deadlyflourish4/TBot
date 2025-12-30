@@ -35,76 +35,76 @@ class AnswerAgent(BaseAgent):
             memory=memory,
         )
 
-    # =========================================================================
-    # 🧠 TASK 1: CLASSIFY INTENT (PHÂN LOẠI Ý ĐỊNH)
-    # =========================================================================
-    def run_classifier(self, user_input: str) -> Dict[str, Any]:
-        """
-        Phân tích câu hỏi user -> Trả về ID intent (0-4) và Keyword.
-        Luôn trả về Dict chuẩn, không bao giờ raise exception.
-        """
+    # # =========================================================================
+    # # 🧠 TASK 1: CLASSIFY INTENT (PHÂN LOẠI Ý ĐỊNH)
+    # # =========================================================================
+    # def run_classifier(self, user_input: str) -> Dict[str, Any]:
+    #     """
+    #     Phân tích câu hỏi user -> Trả về ID intent (0-4) và Keyword.
+    #     Luôn trả về Dict chuẩn, không bao giờ raise exception.
+    #     """
 
-        # 1. Prompt chuyên dụng cho Classification
-        prompt = f"""
-        [ROLE]
-        You are an Intent Classifier. Analyze the input strictly.
+    #     # 1. Prompt chuyên dụng cho Classification
+    #     prompt = f"""
+    #     [ROLE]
+    #     You are an Intent Classifier. Analyze the input strictly.
 
-        [INTENT DEFINITIONS]
-        0: Direction (map, route, distance, location, "ở đâu", "đường đi")
-        1: Media (audio, video, play, listen, "mở bài", "nghe", "poi")
-        2: Info (history, details, description, price, "là gì", "giới thiệu", "cho biết về")
-        3: Chitchat (hello, thanks, bye, unrelated)
-        4: Count (quantity, structure, "bao nhiêu", "có mấy", "liệt kê", "danh sách")
+    #     [INTENT DEFINITIONS]
+    #     0: Direction (map, route, distance, location, "ở đâu", "đường đi")
+    #     1: Media (audio, video, play, listen, "mở bài", "nghe", "poi")
+    #     2: Info (history, details, description, price, "là gì", "giới thiệu", "cho biết về")
+    #     3: Chitchat (hello, thanks, bye, unrelated)
+    #     4: Count (quantity, structure, "bao nhiêu", "có mấy", "liệt kê", "danh sách")
 
-        [STRICT RULES]
-        - If input contains specific POI code (e.g. "poi 123"), classify as 1 (Media).
-        - If input asks "how many" or "list", classify as 4 (Count).
-        - If input asks about a place ("biết về", "kể về"), classify as 2 (Info).
+    #     [STRICT RULES]
+    #     - If input contains specific POI code (e.g. "poi 123"), classify as 1 (Media).
+    #     - If input asks "how many" or "list", classify as 4 (Count).
+    #     - If input asks about a place ("biết về", "kể về"), classify as 2 (Info).
 
-        [USER INPUT]: "{user_input}"
+    #     [USER INPUT]: "{user_input}"
 
-        [OUTPUT FORMAT]
-        Return JSON ONLY: {{"id": <int>, "keyword": "<extracted_entity_name_or_empty>"}}
-        """
+    #     [OUTPUT FORMAT]
+    #     Return JSON ONLY: {{"id": <int>, "keyword": "<extracted_entity_name_or_empty>"}}
+    #     """
 
-        try:
-            # Gọi LLM (Sử dụng hàm invoke của BaseAgent hoặc gọi thẳng llm)
-            # Lưu ý: BaseAgent thường có method run_llm hoặc invoke
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a JSON generator. Output JSON only.",
-                },
-                {"role": "user", "content": prompt},
-            ]
-            response = self.llm.invoke(messages)
-            raw_content = response.content.strip()
+    #     try:
+    #         # Gọi LLM (Sử dụng hàm invoke của BaseAgent hoặc gọi thẳng llm)
+    #         # Lưu ý: BaseAgent thường có method run_llm hoặc invoke
+    #         messages = [
+    #             {
+    #                 "role": "system",
+    #                 "content": "You are a JSON generator. Output JSON only.",
+    #             },
+    #             {"role": "user", "content": prompt},
+    #         ]
+    #         response = self.llm.invoke(messages)
+    #         raw_content = response.content.strip()
 
-            # --- Parsing Logic (Siêu bền) ---
-            # Dùng Regex để tìm JSON trong mớ hỗn độn text mà LLM có thể trả về
-            match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+    #         # --- Parsing Logic (Siêu bền) ---
+    #         # Dùng Regex để tìm JSON trong mớ hỗn độn text mà LLM có thể trả về
+    #         match = re.search(r"\{.*\}", raw_content, re.DOTALL)
 
-            if match:
-                json_str = match.group()
-                data = json.loads(json_str)
+    #         if match:
+    #             json_str = match.group()
+    #             data = json.loads(json_str)
 
-                # Validate ID
-                intent_id = int(data.get("id", 3))
-                if intent_id not in [0, 1, 2, 3, 4]:
-                    intent_id = 3
+    #             # Validate ID
+    #             intent_id = int(data.get("id", 3))
+    #             if intent_id not in [0, 1, 2, 3, 4]:
+    #                 intent_id = 3
 
-                return {
-                    "id": intent_id,
-                    "keyword": str(data.get("keyword", "")).strip(),
-                }
+    #             return {
+    #                 "id": intent_id,
+    #                 "keyword": str(data.get("keyword", "")).strip(),
+    #             }
 
-            # Fallback nếu không tìm thấy JSON
-            print(f"⚠️ [Classifier] JSON not found in: {raw_content[:50]}...")
-            return {"id": 3, "keyword": ""}
+    #         # Fallback nếu không tìm thấy JSON
+    #         print(f"⚠️ [Classifier] JSON not found in: {raw_content[:50]}...")
+    #         return {"id": 3, "keyword": ""}
 
-        except Exception as e:
-            print(f"❌ [Classifier] Error: {e}")
-            return {"id": 3, "keyword": ""}
+    #     except Exception as e:
+    #         print(f"❌ [Classifier] Error: {e}")
+    #         return {"id": 3, "keyword": ""}
 
     # =========================================================================
     # 🗣️ TASK 2: SYNTHESIZE RESPONSE (SINH LỜI THOẠI)
@@ -183,10 +183,10 @@ class AnswerAgent(BaseAgent):
         Nếu args rỗng -> Chạy Synthesizer (Chat mode)
         Nếu có args -> Chạy tương thích code cũ
         """
-        # Nếu gọi từ GraphOrchestrator.run_classifier (chỉ truyền prompt)
-        if not args and not kwargs:
-            # Đây là trick: nếu gọi run() mà không có tham số khác, ta coi như đang test
-            return self.run_classifier(prompt)
+        # # Nếu gọi từ GraphOrchestrator.run_classifier (chỉ truyền prompt)
+        # if not args and not kwargs:
+        #     # Đây là trick: nếu gọi run() mà không có tham số khác, ta coi như đang test
+        #     return self.run_classifier(prompt)
 
         # Nếu gọi kiểu cũ (có dummy args)
         return self.llm.invoke(prompt).content

@@ -15,31 +15,31 @@ class MultiDBManager:
 
     DB_MAP = {
         0: {
-            "server": "35.198.234.0",
-            "database": "vie44364_guidepassasia_cloud",
-            "prefix": "vie44364_vietnampass",
-            "username": "sqlserver",
+            "server": "212.95.42.77,784",
+            "database": "guidepass_guidepassasia_cloud",
+            "prefix": "guidepass_guidepassasia_cloud",
+            "username": "guidepass_guidepassasia_cloud",
             "password": "Tinhyeu75@",
         },
         1: {
-            "server": "112.78.2.94",
+            "server": "112.78.2.94,1433",
             "database": "gui18554_guidepass",
             "prefix": "dbo",
             "username": "gui18554_guidepass",
             "password": "Tinhyeu75@",
         },
         2: {
-            "server": "34.155.247.184",
-            "database": "cityguidepass_cloud",
+            "server": "212.95.42.77,784",
+            "database": "guidepass_cityguidepass_cloud",
             "prefix": "dbo",
-            "username": "sqlserver",
+            "username": "guidepass_cityguidepass_cloud",
             "password": "Tinhyeu75@",
         },
         3: {
-            "server": "112.78.2.156",
-            "database": "pro92766_proguidepass",
-            "prefix": "pro92766_proguidepass",
-            "username": "pro92766_pro_guidepass",
+            "server": "212.95.42.77,784",
+            "database": "propass_proguidepass",
+            "prefix": "propass_proguidepass",
+            "username": "propass_proguidepass",
             "password": "Tinhyeu75@",
         },
         # 4: {...}
@@ -73,7 +73,7 @@ class MultiDBManager:
 
         odbc_str = (
             f"DRIVER={{{driver}}};"
-            f"SERVER={cfg['server']},1433;"
+            f"SERVER={cfg['server']};"
             f"DATABASE={cfg['database']};"
             f"UID={username};PWD={password};"
             "Encrypt=yes;TrustServerCertificate=yes;"
