@@ -3,7 +3,7 @@ from sqlalchemy import text
 
 def preload(self):
     """
-    Cache structure:
+    Cache:
     {
       (region_id, project_id): {
           "names": [...],
@@ -25,11 +25,11 @@ def preload(self):
             rows = conn.execute(text(sql)).fetchall()
 
         for r in rows:
-            key = (int(region_id), int(r.ProjectID))
-            self._store.setdefault(key, {"names": [], "embeddings": None})
+            key = (int(region_id), int(r.ProjectID))  # ✅ DÙNG ProjectID
+            self._store.setdefault(key, {"names": []})
             self._store[key]["names"].append(r.SubProjectName)
 
-    # embed once
+    # ---- EMBED ONCE ----
     for key, data in self._store.items():
         data["embeddings"] = self.embedder.encode(
             [f"passage: {n}" for n in data["names"]],

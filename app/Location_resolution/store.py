@@ -18,14 +18,20 @@ class LocationStore:
 
     def preload(self):
         """
-        Load ALL locations + embeddings into RAM once.
+        Cache:
+        {
+        (region_id, project_id): {
+            "names": [...],
+            "embeddings": np.ndarray
+        }
+        }
         """
         for region_id, cfg in self.db_manager.DB_MAP.items():
             engine = self.db_manager.get_engine(region_id)
             prefix = cfg["prefix"]
 
             sql = f"""
-            SELECT SubProjectID, SubProjectName
+            SELECT ProjectID, SubProjectName
             FROM {prefix}.SubProjects
             WHERE SubProjectName IS NOT NULL
             """
@@ -34,19 +40,18 @@ class LocationStore:
                 rows = conn.execute(text(sql)).fetchall()
 
             for r in rows:
-                key = (region_id, r.SubProjectID)
-                self._store.setdefault(key, []).append(r.SubProjectName)
+                key = (int(region_id), int(r.ProjectID))
+                self._store.setdefault(key, {"names": [], "embeddings": None})
+                self._store[key]["names"].append(r.SubProjectName)
 
         # embed once
-        for key, names in self._store.items():
-            embs = self.embedder.encode(
-                [f"passage: {n}" for n in names],
+        for key, data in self._store.items():
+            data["embeddings"] = self.embedder.encode(
+                [f"passage: {n}" for n in data["names"]],
                 normalize_embeddings=True,
             )
-            self._store[key] = {
-                "names": names,
-                "embeddings": embs,
-            }
+
+        print("📍 LocationStore preloaded into RAM")
 
     def match(self, region_id: int, project_id: int, ner_location: str):
         print(
@@ -79,6 +84,6 @@ class LocationStore:
             return None
 
         return {
-            "subproject_name": data["names"][idx],
+            "name": data["names"][idx],
             "score": score,
         }

@@ -222,7 +222,7 @@ class GraphOrchestrator:
             if ner_locs:
                 target_place = self.location_store.match(
                     region_id=region_id,
-                    subproject_id=project_id,
+                    project_id=project_id,
                     ner_location=ner_locs[0],
                 )
 
@@ -269,7 +269,7 @@ class GraphOrchestrator:
         if (
             intent_label == "media"
             and raw_data
-            and raw_data.get("media_type", "").lower() == "audio"
+            and raw_data.get("media_type", "").lower() == "video"
         ):
             audio = raw_data.get("url")
 
