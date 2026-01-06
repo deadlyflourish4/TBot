@@ -17,6 +17,7 @@ from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFil
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer
+from services.chat_manager import ChatManager
 from services.storage import GCStorage
 from google import genai
 from google.genai.types import GenerateContentConfig, ImageConfig, Modality, Part
