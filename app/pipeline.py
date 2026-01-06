@@ -1,277 +1,277 @@
-import time
-import re
-import unicodedata
-from typing import Dict, List
+"""
+TBot Pipeline with Query-Oriented RAG.
 
-from sqlalchemy import text
+Flow:
+1. User Input → Reflection → Synthesized Query
+2. Semantic Router → [Chitchat] → LLMs
+                   → [RAG] → QueryStore → Reranker → SQL Execute → LLMs
+"""
+import logging
+from typing import Any, Dict, List, Optional
+
 import torch
 from sentence_transformers import SentenceTransformer
+from sqlalchemy import text
 
-from Agent.Answeragent import AnswerAgent
-from Database.db import MultiDBManager
-from Agent.SemanticRouter import SemanticRouter
-from Utils.SessionMemory import SessionMemory
+from agents.Answeragent import AnswerAgent
+from agents.SemanticRouter import SemanticRouter
+from database.db import MultiDBManager
+from rag.location import NERService, LocationStore
+from rag.query_store import QueryStore
+from rag.reranker import Reranker
+from utils.Reflection import Reflection
+from utils.SessionMemory import SessionMemory
 
-# from Utils.Reflection import Reflection
-from Location_resolution.ner import NERService
-from Location_resolution.store import LocationStore
+logger = logging.getLogger(__name__)
 
 
 # ==========================================================
-# 🛠️ DB WRAPPER (DEBUG SQL)
+# DB WRAPPER
 # ==========================================================
 class DBWrapper:
+    """Database wrapper with parameterized query support."""
+
     def __init__(self, engine, debug: bool = False):
         self.engine = engine
         self.debug = debug
 
-    def run_query(self, sql: str):
+    def run_query(self, sql: str, params: dict = None) -> List[Dict]:
+        """Execute SQL query with parameters."""
         if self.debug:
-            print("🧾 [SQL] Executing:")
-            print(sql.strip())
+            logger.debug(f"SQL: {sql.strip()}")
+            logger.debug(f"Params: {params}")
 
         with self.engine.connect() as conn:
-            result = conn.execute(text(sql))
+            result = conn.execute(text(sql), params or {})
             rows = [dict(r._mapping) for r in result]
 
         if self.debug:
-            print(f"📊 [SQL] Rows returned: {len(rows)}")
+            logger.debug(f"Rows: {len(rows)}")
 
         return rows
 
 
+# ==========================================================
+# PIPELINE (Shared Resources)
+# ==========================================================
 class Pipeline:
+    """Shared resources - initialized once."""
+
     def __init__(self):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model_name = "anansupercuteeeee/multilingual-traveling"
 
-        print(f"🚀 Loading shared embedder: {model_name} on {device.upper()}")
+        logger.info(f"Loading embedder: {model_name} on {device.upper()}")
         self.embedder = SentenceTransformer(model_name, device=device)
 
+        # Core components
         self.db_manager = MultiDBManager()
-
-        # inject embedder
         self.semantic_router = SemanticRouter(self.embedder)
-
-        # 🔹 init NER 1 lần
         self.ner_service = NERService()
 
-        # 🔹 preload ALL location to RAM
+        # Location store
         self.location_store = LocationStore(
             embedder=self.embedder,
             db_manager=self.db_manager,
-            ner_service=self.ner_service,  # ✅ inject vào đây
+            ner_service=self.ner_service,
         )
         self.location_store.preload()
 
-        print("📍 LocationStore preloaded into RAM")
+        # Query RAG components
+        self.query_store = QueryStore(embedder=self.embedder)
+        self.reranker = Reranker()
+
+        logger.info("Pipeline initialized")
 
 
 # ==========================================================
-# 🎮 GRAPH ORCHESTRATOR (FINAL)
+# GRAPH ORCHESTRATOR
 # ==========================================================
 class GraphOrchestrator:
-    def __init__(self, debug: bool = True):
+    """Main orchestrator with Query-Oriented RAG."""
+
+    def __init__(self, debug: bool = False):
         self.debug = debug
         self.memory = SessionMemory()
-
-        # 🔹 pipeline init 1 lần
         self.pipeline = Pipeline()
 
-        # 🔹 dùng shared components
+        # Shared components
         self.router = self.pipeline.semantic_router
         self.location_store = self.pipeline.location_store
         self.db_manager = self.pipeline.db_manager
+        self.query_store = self.pipeline.query_store
+        self.reranker = self.pipeline.reranker
 
+        # LLM Agent
         self.answer_agent = AnswerAgent(system_prompt="", memory=self.memory)
-        # self.reflection = Reflection(llm=self.answer_agent.llm)
 
-    # ---------------- DEBUG ----------------
-    def dbg(self, *args):
+        # Reflection module
+        self.reflection = Reflection(llm=self.answer_agent.llm)
+
+    def _log(self, msg: str) -> None:
         if self.debug:
-            print(*args)
+            logger.debug(msg)
 
-    # ---------------- LLM ----------------
-    def synthesize_response(self, user_question, raw_data, intent_label):
+    # ----------------------------------------------------------
+    # LLM Response
+    # ----------------------------------------------------------
+    def synthesize_response(self, question: str, data: Any, intent: str) -> str:
+        """Generate natural language response."""
         try:
-            return self.answer_agent.run_synthesizer(
-                user_question, raw_data, intent_label
-            )
+            return self.answer_agent.run_synthesizer(question, data, intent)
         except Exception as e:
-            self.dbg("❌ LLM ERROR:", e)
-            return str(raw_data)
+            logger.error(f"LLM error: {e}")
+            return str(data)
 
-    # ======================================================
-    # WORKERS (DEBUG HÀM + SQL)
-    # ======================================================
-    def run_direction(self, ctx, target_place):
-        self.dbg("🛠️ [WORKER] run_direction")
-
-        if not target_place:
-            self.dbg("⚠️ run_direction: target_place=None")
-            return None
-
+    # ----------------------------------------------------------
+    # RAG: Execute SQL Template
+    # ----------------------------------------------------------
+    def execute_rag_query(
+        self,
+        template: Dict,
+        variables: Dict,
+        ctx: Dict,
+    ) -> Optional[Dict]:
+        """Execute SQL template with bound variables."""
         engine = self.db_manager.get_engine(ctx["region_id"])
         db = DBWrapper(engine, debug=self.debug)
         prefix = self.db_manager.DB_MAP[ctx["region_id"]]["prefix"]
 
-        sql = f"""
-        SELECT SubProjectName, Location, Introduction
-        FROM {prefix}.SubProjects
-        WHERE SubProjectName = N'{target_place['name']}'
-        """
-        rows = db.run_query(sql)
-        self.dbg("📦 run_direction rows =", rows)
+        sql = template["sql_template"].replace("{prefix}", prefix)
+
+        self._log(f"Executing RAG query: {template['intent']}")
+        rows = db.run_query(sql, variables)
 
         return rows[0] if rows else None
 
-    def run_info(self, ctx, target_place):
-        self.dbg("🛠️ [WORKER] run_info")
+    # ----------------------------------------------------------
+    # Chitchat Handler
+    # ----------------------------------------------------------
+    def run_chitchat(self, question: str) -> Dict:
+        """Handle chitchat directly with LLM."""
+        return {"context": "social", "query": question}
 
-        if not target_place:
-            return None
-
-        engine = self.db_manager.get_engine(ctx["region_id"])
-        db = DBWrapper(engine, debug=self.debug)
-        prefix = self.db_manager.DB_MAP[ctx["region_id"]]["prefix"]
-
-        sql = f"""
-        SELECT SubProjectName, Introduction
-        FROM {prefix}.SubProjects
-        WHERE SubProjectName = N'{target_place['name']}'
+    # ==========================================================
+    # MAIN PIPELINE
+    # ==========================================================
+    def run(
+        self,
+        session_id: str,
+        user_question: str,
+        user_location: str,
+        project_id: int,
+        region_id: int = 0,
+    ) -> Dict[str, Any]:
         """
-        rows = db.run_query(sql)
-        self.dbg("📦 run_info rows =", rows)
+        Main pipeline entry point.
 
-        return rows[0] if rows else None
-
-    def run_media(self, ctx, target_place):
-        self.dbg("🛠️ [WORKER] run_media")
-
-        if not target_place:
-            return None
-
-        engine = self.db_manager.get_engine(ctx["region_id"])
-        db = DBWrapper(engine, debug=self.debug)
-        prefix = self.db_manager.DB_MAP[ctx["region_id"]]["prefix"]
-
-        sql = f"""
-        SELECT TOP 1
-            COALESCE(MD.MediaURL, MA.MediaURL) AS URL,
-            COALESCE(MD.MediaType, MA.MediaType) AS Type,
-            S.SubProjectName
-        FROM {prefix}.SubProjects AS S
-        LEFT JOIN {prefix}.SubprojectAttractions AS A
-            ON S.SubProjectID = A.SubProjectID
-        LEFT JOIN {prefix}.SubprojectAttractionMedia AS MA
-            ON A.SubProjectAttractionID = MA.SubProjectAttractionID
-        LEFT JOIN {prefix}.SubprojectAttractionDetails AS D
-            ON A.SubProjectAttractionID = D.SubProjectAttractionID
-        LEFT JOIN {prefix}.SubprojectAttractionDetailsMedia AS MD
-            ON D.SubProjectAttractionDetailID = MD.SubProjectAttractionDetailID
-        WHERE S.SubProjectName = N'{target_place['name']}'
+        Flow:
+        1. Reflection (rewrite query)
+        2. Semantic Router (chitchat vs RAG)
+        3. [Chitchat] → LLM
+        4. [RAG] → QueryStore → Reranker → SQL → LLM
         """
-        rows = db.run_query(sql)
-        self.dbg("📦 run_media rows =", rows)
-
-        if not rows:
-            return {"status": "not_found"}
-
-        return {
-            "media_type": rows[0]["Type"],
-            "url": rows[0]["URL"],
-            "place_name": rows[0]["SubProjectName"],
-        }
-
-    def run_count(self, ctx, target_place):
-        self.dbg("🛠️ [WORKER] run_count")
-        return {"total": 0} if target_place else None
-
-    def run_chitchat(self, ctx):
-        self.dbg("🛠️ [WORKER] run_chitchat")
-        return {"context": "social"}
-
-    # ======================================================
-    # 🚀 MAIN PIPELINE
-    # ======================================================
-    def run(self, session_id, user_question, user_location, project_id, region_id=0):
         ctx = {
             "session_id": f"{session_id}_{region_id}",
             "project_id": project_id,
             "region_id": region_id,
         }
 
-        self.dbg("\n================ REQUEST ================")
-        self.dbg("👤 USER:", user_question)
+        self._log(f"Request: {user_question}")
 
-        # 1️⃣ INTENT
+        # 1️⃣ REFLECTION - Rewrite query with context
         self.memory.append_user(ctx["session_id"], user_question)
-        intent_res = self.router.classify_intent(user_question)
+        synthesized_query = self.reflection(self.memory, ctx["session_id"])
+        logger.info(f"Reflection: '{user_question}' → '{synthesized_query}'")
 
-        intent_id = intent_res["id"]
-        intent_label = intent_res["label"]
-        self.memory.set_ctx(ctx["session_id"], "last_intent", intent_label)
+        # 2️⃣ SEMANTIC ROUTER - Chitchat or RAG?
+        route_result = self.router.classify(synthesized_query)
+        is_chitchat = route_result["is_chitchat"]
 
-        self.dbg("🧠 INTENT:", intent_label, intent_res.get("score"))
+        logger.info(f"Route: {'chitchat' if is_chitchat else 'rag'} (score: {route_result['score']:.2f})")
 
-        # 3️⃣ TARGET PLACE (CHUẨN – RAM ONLY)
-        target_place = None
-        if intent_id in [0, 1, 2]:
-            ner_locs = self.location_store.extract_ner(user_question)
-            print(f"NER location: {ner_locs}")
-            if ner_locs:
-                target_place = self.location_store.match(
-                    region_id=region_id,
-                    project_id=project_id,
-                    ner_location=ner_locs[0],
-                )
-
-            # fallback: dùng context cũ
-            if not target_place:
-                target_place = self.memory.get_ctx(
-                    ctx["session_id"], "last_target_place"
-                )
-
-        if target_place:
-            self.memory.set_ctx(ctx["session_id"], "last_target_place", target_place)
-
-        self.dbg("🎯 TARGET:", target_place)
-
-        # 4️⃣ WORKER ROUTE (GIỮ NGUYÊN LOGIC SQL)
-        if intent_id == 0:
-            raw_data = self.run_direction(ctx, target_place)
-        elif intent_id == 1:
-            raw_data = self.run_media(ctx, target_place)
-        elif intent_id == 2:
-            raw_data = self.run_info(ctx, target_place)
-        else:
-            raw_data = self.run_chitchat(ctx)
-
-        self.dbg("🧪 raw_data =", raw_data)
-
-        # 5️⃣ RESPONSE
-        if intent_label == "direction" and raw_data and raw_data.get("Location"):
-            final_message = "Bạn có thể bấm nút bên dưới để xem cách đi"
-        else:
+        # 3️⃣ ROUTE: Chitchat vs RAG
+        if is_chitchat:
+            raw_data = self.run_chitchat(synthesized_query)
             final_message = self.synthesize_response(
-                user_question, raw_data, intent_label
+                synthesized_query, raw_data, "chitchat"
             )
+        else:
+            # 4️⃣ QUERY RAG - Match query to template
+            candidates = self.query_store.match(synthesized_query, top_k=3)
 
+            if not candidates:
+                logger.warning("No matching query templates")
+                raw_data = {"error": "no_template_match"}
+                final_message = "Xin lỗi, tôi không hiểu câu hỏi của bạn."
+            else:
+                # 5️⃣ RERANKER - Get best match
+                reranked = self.reranker.rerank(synthesized_query, candidates, top_k=1)
+                best_match = reranked[0]
+                template = best_match["template"]
+
+                logger.info(f"Template: {template['intent']} (score: {best_match.get('rerank_score', best_match['score']):.3f})")
+
+                # 6️⃣ EXTRACT VARIABLES - Use NER for place_name
+                variables = {}
+                if "place_name" in template["required_vars"]:
+                    ner_locs = self.location_store.extract_ner(synthesized_query)
+
+                    if ner_locs:
+                        place = self.location_store.match(
+                            region_id=region_id,
+                            project_id=project_id,
+                            ner_location=ner_locs[0],
+                        )
+                        if place:
+                            variables["place_name"] = place["name"]
+
+                    # Fallback to context
+                    if "place_name" not in variables:
+                        last_place = self.memory.get_ctx(ctx["session_id"], "last_target_place")
+                        if last_place:
+                            variables["place_name"] = last_place["name"]
+
+                # Check required variables
+                missing = [v for v in template["required_vars"] if v not in variables]
+                if missing:
+                    logger.warning(f"Missing variables: {missing}")
+                    raw_data = {"error": "missing_variables", "missing": missing}
+                    final_message = "Bạn muốn hỏi về địa điểm nào?"
+                else:
+                    # 7️⃣ EXECUTE SQL
+                    raw_data = self.execute_rag_query(template, variables, ctx)
+
+                    # Save target place
+                    if "place_name" in variables:
+                        self.memory.set_ctx(
+                            ctx["session_id"],
+                            "last_target_place",
+                            {"name": variables["place_name"]},
+                        )
+
+                    # 8️⃣ LLM RESPONSE
+                    if raw_data:
+                        if template["intent"] == "direction" and raw_data.get("Location"):
+                            final_message = "Bạn có thể bấm nút bên dưới để xem cách đi"
+                        else:
+                            final_message = self.synthesize_response(
+                                synthesized_query, raw_data, template["intent"]
+                            )
+                    else:
+                        final_message = "Xin lỗi, không tìm thấy thông tin."
+
+        # Save AI response
         self.memory.append_ai(ctx["session_id"], final_message)
 
-        # 6️⃣ FORMAT OUTPUT (GIỮ NGUYÊN)
+        # Format output
         location = None
         audio = None
 
-        if intent_label == "direction" and raw_data:
+        if raw_data and isinstance(raw_data, dict):
             location = raw_data.get("Location")
-
-        if (
-            intent_label == "media"
-            and raw_data
-            and raw_data.get("media_type", "").lower() == "video"
-        ):
-            audio = raw_data.get("url")
+            if raw_data.get("media_type", "").lower() == "video":
+                audio = raw_data.get("url")
 
         return {
             "Message": final_message,

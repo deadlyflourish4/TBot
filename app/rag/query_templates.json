@@ -1,0 +1,29 @@
+[
+    {
+        "key": "giờ mở cửa, opening hours, mấy giờ mở cửa, thời gian mở cửa, lúc nào mở cửa, khi nào mở cửa",
+        "intent": "opening_hours",
+        "sql_template": "SELECT SubProjectName, OpeningHours, ClosingHours FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
+        "required_vars": [
+            "place_name"
+        ],
+        "description": "Query opening and closing hours for a location"
+    },
+    {
+        "key": "thông tin, giới thiệu, mô tả, chi tiết, info, information, description, about, lịch sử, history",
+        "intent": "info",
+        "sql_template": "SELECT SubProjectName, Introduction FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
+        "required_vars": [
+            "place_name"
+        ],
+        "description": "Query general information about a location"
+    },
+    {
+        "key": "vị trí, địa chỉ, ở đâu, location, address, where, đường đi, direction, chỉ đường, cách đi, how to get",
+        "intent": "direction",
+        "sql_template": "SELECT SubProjectName, Location, Introduction FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
+        "required_vars": [
+            "place_name"
+        ],
+        "description": "Query location and directions for a place"
+    }
+]

@@ -9,9 +9,7 @@ from typing import List, Optional
 
 import edge_tts
 
-# from Azure_blob.blob import AzureBlobUploader
-from Chat.chatsession import ChatManager
-from Database.db import MultiDBManager
+from database.db import MultiDBManager
 from deep_translator import GoogleTranslator
 
 # ===== 2. Third-party imports =====
@@ -19,7 +17,7 @@ from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFil
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer
-from GCP.storage import GCStorage
+from services.storage import GCStorage
 from google import genai
 from google.genai.types import GenerateContentConfig, ImageConfig, Modality, Part
 from langdetect import detect
@@ -28,7 +26,7 @@ from PIL import Image
 # ===== 3. Local project imports =====
 from pipeline import GraphOrchestrator
 from pydantic import BaseModel
-from Security.middleware import jwt_middleware
+from security.middleware import jwt_middleware
 
 security = HTTPBearer()
 app = FastAPI(

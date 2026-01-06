@@ -1,56 +1,68 @@
+"""
+Reflection module for query rewriting.
+Rewrites follow-up questions to be standalone using conversation context.
+"""
+import logging
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 
 
 class Reflection:
-    def __init__(self, llm, max_turns: int = 5):
+    """
+    Query rewriter for RAG pipeline.
+    Converts follow-up questions into standalone queries.
+    
+    Optimization:
+    - Skips LLM if first message (no context needed)
+    - Uses minimal prompt for speed
+    """
+
+    def __init__(self, llm, max_turns: int = 3):
         self.llm = llm
         self.max_turns = max_turns
 
-    # --------------------------------------------------
-    # Convert LangChain memory → prompt string
-    # --------------------------------------------------
-    def _format_from_session_memory(self, history: InMemoryChatMessageHistory) -> str:
-        messages = history.messages[-self.max_turns * 2 :]
+    def _format_history(self, history: InMemoryChatMessageHistory) -> str:
+        """Format recent history as compact string."""
+        messages = history.messages[-self.max_turns * 2:]
         lines = []
-
         for msg in messages:
-            role = "user" if msg.type == "human" else "assistant"
-            lines.append(f"{role}: {msg.content}")
-
+            role = "U" if msg.type == "human" else "A"
+            # Truncate long messages
+            content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+            lines.append(f"{role}: {content}")
         return "\n".join(lines)
 
-    # --------------------------------------------------
-    # Main call
-    # --------------------------------------------------
     def __call__(self, session_memory, session_id: str) -> str:
+        """
+        Rewrite query to be standalone.
+        
+        Returns original query if:
+        - First message in session
+        - Query already standalone
+        """
         history = session_memory.get(session_id)
+        
+        # Skip LLM for first message (no context to resolve)
+        if len(history.messages) <= 2:
+            last_msg = history.messages[-1].content if history.messages else ""
+            logger.debug("Reflection: first message, skipping LLM")
+            return last_msg
 
-        history_string = self._format_from_session_memory(history)
+        # Minimal prompt for speed
+        history_str = self._format_history(history)
+        prompt = f"""Rewrite the LAST user message to be a standalone question.
+Keep it SHORT. Do NOT answer.
 
-        system_prompt = """
-Bạn là một module viết lại câu hỏi cho hệ thống RAG.
+{history_str}
 
-Nhiệm vụ:
-- Dựa trên lịch sử hội thoại bên dưới
-- Viết lại câu hỏi CUỐI CÙNG thành một câu hỏi ĐỘC LẬP, rõ nghĩa
-- KHÔNG trả lời câu hỏi
-- KHÔNG thêm thông tin mới
-- Nếu câu hỏi đã độc lập, hãy giữ nguyên
-""".strip()
+Standalone:"""
 
-        user_prompt = f"""
-Lịch sử hội thoại:
-{history_string}
-
-Câu hỏi độc lập:
-""".strip()
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-
-        completion = self.llm.invoke(messages)
-
-        return completion.content.strip()
+        try:
+            result = self.llm.invoke(prompt)
+            rewritten = result.content.strip().strip('"')
+            logger.debug(f"Reflection: '{history.messages[-1].content}' → '{rewritten}'")
+            return rewritten
+        except Exception as e:
+            logger.error(f"Reflection error: {e}")
+            return history.messages[-1].content
