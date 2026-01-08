@@ -51,11 +51,21 @@ class Reflection:
 
         # Clean, simple prompt
         history_str = self._format_history(history)
+        current_question = history.messages[-1].content
         
-        prompt = f"""Given a chat history and the latest user question which might reference context in the chat history, formulate a standalone question in Vietnamese which can be understood without the chat history. Do NOT answer the question, just reformulate it if needed and otherwise return it as is.
+        prompt = f"""Rewrite the LATEST question to be standalone.
+
+IMPORTANT RULES:
+- KEEP all place names/locations from the LATEST question exactly as written
+- Only resolve pronouns like "nó", "đó", "ở đây", "it", "there" using context
+- If the LATEST question mentions a NEW place, use that place (not from history)
+- Do NOT translate or change place names
+- Keep it SHORT
 
 Chat history:
 {history_str}
+
+LATEST question: {current_question}
 
 Standalone question:"""
 
