@@ -49,19 +49,20 @@ class Reflection:
             logger.debug("Reflection: first message, skipping LLM")
             return last_msg
 
-        # Minimal prompt for speed
+        # Clean, simple prompt
         history_str = self._format_history(history)
-        prompt = f"""Rewrite the LAST user message to be a standalone question.
-Keep it SHORT. Do NOT answer.
+        
+        prompt = f"""Given a chat history and the latest user question which might reference context in the chat history, formulate a standalone question in Vietnamese which can be understood without the chat history. Do NOT answer the question, just reformulate it if needed and otherwise return it as is.
 
+Chat history:
 {history_str}
 
-Standalone:"""
+Standalone question:"""
 
         try:
             result = self.llm.invoke(prompt)
             rewritten = result.content.strip().strip('"')
-            logger.debug(f"Reflection: '{history.messages[-1].content}' → '{rewritten}'")
+            print(f"🔄 [REFLECTION] {history.messages[-1].content} → {rewritten}")
             return rewritten
         except Exception as e:
             logger.error(f"Reflection error: {e}")

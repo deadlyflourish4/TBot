@@ -33,13 +33,13 @@ class AnswerAgent(BaseAgent):
         self,
         system_prompt: str = "",
         memory: Optional[SessionMemory] = None,
-        model_name: str = "qwen2.5:7b",  # Faster than gpt-oss:20b
-        temperature: float = 0.3,
+        model_name: str = "gemma2:9b",  # Better for Vietnamese, no Chinese mixing
+        temperature: float = 0.2,
     ):
         if not system_prompt:
             system_prompt = (
                 "You are a smart, friendly, and helpful AI Travel Guide. "
-                "Respond in the same language as the user's question."
+                # "Respond in the same language as the user's question."
             )
 
         super().__init__(

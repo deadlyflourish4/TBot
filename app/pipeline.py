@@ -139,8 +139,10 @@ class GraphOrchestrator:
 
         sql = template["sql_template"].replace("{prefix}", prefix)
 
-        self._log(f"Executing RAG query: {template['intent']}")
+        print(f"📊 [SQL] {sql}")
+        print(f"📊 [PARAMS] {variables}")
         rows = db.run_query(sql, variables)
+        print(f"📊 [RESULT] {len(rows)} rows")
 
         return rows[0] if rows else None
 
@@ -177,18 +179,20 @@ class GraphOrchestrator:
             "region_id": region_id,
         }
 
-        self._log(f"Request: {user_question}")
+        print(f"\n{'='*50}")
+        print(f"📥 [INPUT] {user_question}")
+        print(f"{'='*50}")
 
         # 1️⃣ REFLECTION - Rewrite query with context
         self.memory.append_user(ctx["session_id"], user_question)
         synthesized_query = self.reflection(self.memory, ctx["session_id"])
-        logger.info(f"Reflection: '{user_question}' → '{synthesized_query}'")
+        print(f"🔄 [REFLECTION] {user_question} → {synthesized_query}")
 
         # 2️⃣ SEMANTIC ROUTER - Chitchat or RAG?
         route_result = self.router.classify(synthesized_query)
         is_chitchat = route_result["is_chitchat"]
-
-        logger.info(f"Route: {'chitchat' if is_chitchat else 'rag'} (score: {route_result['score']:.2f})")
+        route_type = 'CHITCHAT' if is_chitchat else 'RAG'
+        print(f"🚦 [ROUTER] {route_type} (score: {route_result['score']:.2f})")
 
         # 3️⃣ ROUTE: Chitchat vs RAG
         if is_chitchat:
@@ -210,13 +214,14 @@ class GraphOrchestrator:
                 best_match = reranked[0]
                 template = best_match["template"]
 
-                logger.info(f"Template: {template['intent']} (score: {best_match.get('rerank_score', best_match['score']):.3f})")
+                print(f"📋 [TEMPLATE] {template['intent']} (score: {best_match.get('rerank_score', best_match['score']):.3f})")
 
                 # 6️⃣ EXTRACT VARIABLES - Use NER for place_name
                 variables = {"project_id": project_id}  # Always include project_id
                 
                 if "place_name" in template["required_vars"]:
                     ner_locs = self.location_store.extract_ner(synthesized_query)
+                    print(f"🏷️ [NER] Extracted: {ner_locs}")
 
                     if ner_locs:
                         place = self.location_store.match(
