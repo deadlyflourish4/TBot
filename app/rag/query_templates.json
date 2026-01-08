@@ -1,29 +1,42 @@
 [
     {
-        "key": "giờ mở cửa, opening hours, mấy giờ mở cửa, thời gian mở cửa, lúc nào mở cửa, khi nào mở cửa",
-        "intent": "opening_hours",
-        "sql_template": "SELECT SubProjectName, OpeningHours, ClosingHours FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
-        "required_vars": [
-            "place_name"
-        ],
-        "description": "Query opening and closing hours for a location"
-    },
-    {
-        "key": "thông tin, giới thiệu, mô tả, chi tiết, info, information, description, about, lịch sử, history",
+        "key": "thông tin, giới thiệu, mô tả, chi tiết, info, information, description, about, lịch sử, history, kể về, cho biết về",
         "intent": "info",
-        "sql_template": "SELECT SubProjectName, Introduction FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
+        "sql_template": "SELECT SubProjectName, Introduction, Location FROM {prefix}.SubProjects WHERE SubProjectName LIKE :place_name AND ProjectID = :project_id",
         "required_vars": [
-            "place_name"
+            "place_name",
+            "project_id"
         ],
         "description": "Query general information about a location"
     },
     {
-        "key": "vị trí, địa chỉ, ở đâu, location, address, where, đường đi, direction, chỉ đường, cách đi, how to get",
-        "intent": "direction",
-        "sql_template": "SELECT SubProjectName, Location, Introduction FROM {prefix}.SubProjects WHERE SubProjectName = :place_name",
+        "key": "vị trí, địa chỉ, ở đâu, location, address, where, đường đi, direction, chỉ đường, cách đi, how to get, bản đồ, map",
+        "intent": "location",
+        "sql_template": "SELECT SubProjectName, Location FROM {prefix}.SubProjects WHERE SubProjectName LIKE :place_name AND ProjectID = :project_id",
         "required_vars": [
-            "place_name"
+            "place_name",
+            "project_id"
         ],
         "description": "Query location and directions for a place"
+    },
+    {
+        "key": "video, audio, media, xem video, nghe, play, mở video, mở bài, phát",
+        "intent": "media",
+        "sql_template": "SELECT sp.SubProjectID, sp.SubProjectName, a.AttractionName, am.MediaType, am.MediaURL FROM {prefix}.SubProjects sp JOIN {prefix}.SubProjectAttractions a ON sp.SubProjectID = a.SubProjectID JOIN {prefix}.SubProjectAttractionMedia am ON a.SubProjectAttractionID = am.SubProjectAttractionID WHERE sp.SubProjectName = :place_name AND sp.ProjectID = :project_id AND am.MediaType = 'video'",
+        "required_vars": [
+            "place_name",
+            "project_id"
+        ],
+        "description": "Query video media for a location"
+    },
+    {
+        "key": "làm gì, tham quan gì, xem gì, có gì, attractions, things to do, what to see, điểm tham quan, hoạt động",
+        "intent": "attractions",
+        "sql_template": "SELECT TOP 5 sp.SubProjectName, a.AttractionName, a.Introduction FROM {prefix}.SubProjects sp JOIN {prefix}.SubProjectAttractions a ON sp.SubProjectID = a.SubProjectID WHERE sp.SubProjectName LIKE :place_name AND sp.ProjectID = :project_id ORDER BY a.SortOrder",
+        "required_vars": [
+            "place_name",
+            "project_id"
+        ],
+        "description": "Query list of attractions within a location"
     }
 ]

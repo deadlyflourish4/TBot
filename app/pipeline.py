@@ -213,7 +213,8 @@ class GraphOrchestrator:
                 logger.info(f"Template: {template['intent']} (score: {best_match.get('rerank_score', best_match['score']):.3f})")
 
                 # 6️⃣ EXTRACT VARIABLES - Use NER for place_name
-                variables = {}
+                variables = {"project_id": project_id}  # Always include project_id
+                
                 if "place_name" in template["required_vars"]:
                     ner_locs = self.location_store.extract_ner(synthesized_query)
 

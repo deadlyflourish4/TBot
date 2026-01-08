@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class NERService:
     """Named Entity Recognition service for location extraction."""
 
-    def __init__(self):
+    def __init__(self, device: str = "cuda"):
         self.model_name = "Davlan/xlm-roberta-base-ner-hrl"
         logger.info(f"Loading NER model: {self.model_name}")
 
@@ -27,6 +27,8 @@ class NERService:
             model=model,
             tokenizer=tokenizer,
             aggregation_strategy="simple",
+            device=device,
+            batch_size=1,  # Single request, suppress warning
         )
 
         logger.info("NERService ready")
