@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import torch
+from langdetect import detect, LangDetectException
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import text
 
@@ -23,6 +24,37 @@ from utils.Reflection import Reflection
 from utils.SessionMemory import SessionMemory
 
 logger = logging.getLogger(__name__)
+
+# Multilingual messages
+MESSAGES = {
+    "vi": {
+        "vague": "Bạn muốn hỏi gì về {place}? Ví dụ: thông tin, vị trí, video...",
+        "no_template": "Xin lỗi, tôi không hiểu câu hỏi của bạn.",
+        "missing_place": "Bạn muốn hỏi về địa điểm nào?",
+        "no_result": "Xin lỗi, không tìm thấy thông tin.",
+        "direction": "Bạn có thể bấm nút bên dưới để xem cách đi",
+    },
+    "en": {
+        "vague": "What would you like to know about {place}? E.g: info, location, video...",
+        "no_template": "Sorry, I don't understand your question.",
+        "missing_place": "Which place are you asking about?",
+        "no_result": "Sorry, I couldn't find any information.",
+        "direction": "You can click the button below to see directions",
+    },
+}
+
+def detect_lang(text: str) -> str:
+    """Detect language, default to Vietnamese."""
+    try:
+        lang = detect(text)
+        return "en" if lang == "en" else "vi"
+    except LangDetectException:
+        return "vi"
+
+def get_msg(key: str, lang: str, **kwargs) -> str:
+    """Get message in detected language."""
+    msg = MESSAGES.get(lang, MESSAGES["vi"]).get(key, MESSAGES["vi"][key])
+    return msg.format(**kwargs) if kwargs else msg
 
 
 # ==========================================================
@@ -194,6 +226,20 @@ class GraphOrchestrator:
         route_type = 'CHITCHAT' if is_chitchat else 'RAG'
         print(f"🚦 [ROUTER] {route_type} (score: {route_result['score']:.2f})")
 
+        # 2.5️⃣ VAGUE QUERY DETECTION
+        user_lang = detect_lang(user_question)
+        vague_patterns = ["thì sao", "thế nào", "như thế nào", "sao", "gì", "what about"]
+        is_vague = any(p in synthesized_query.lower() for p in vague_patterns) and len(synthesized_query) < 30
+        
+        if is_vague and is_chitchat:
+            # Check if there's context from previous question
+            last_place = self.memory.get_ctx(ctx["session_id"], "last_target_place")
+            if last_place:
+                print(f"❓ [VAGUE] Detected vague query, asking for clarification")
+                final_message = get_msg("vague", user_lang, place=last_place['name'])
+                self.memory.append_ai(ctx["session_id"], final_message)
+                return {"Message": final_message, "location": None, "audio": None, "session_id": ctx["session_id"]}
+
         # 3️⃣ ROUTE: Chitchat vs RAG
         if is_chitchat:
             raw_data = self.run_chitchat(synthesized_query)
@@ -207,7 +253,7 @@ class GraphOrchestrator:
             if not candidates:
                 logger.warning("No matching query templates")
                 raw_data = {"error": "no_template_match"}
-                final_message = "Xin lỗi, tôi không hiểu câu hỏi của bạn."
+                final_message = get_msg("no_template", user_lang)
             else:
                 # 5️⃣ RERANKER - Get best match
                 reranked = self.reranker.rerank(synthesized_query, candidates, top_k=1)
@@ -243,7 +289,7 @@ class GraphOrchestrator:
                 if missing:
                     logger.warning(f"Missing variables: {missing}")
                     raw_data = {"error": "missing_variables", "missing": missing}
-                    final_message = "Bạn muốn hỏi về địa điểm nào?"
+                    final_message = get_msg("missing_place", user_lang)
                 else:
                     # 7️⃣ EXECUTE SQL
                     raw_data = self.execute_rag_query(template, variables, ctx)
@@ -259,7 +305,7 @@ class GraphOrchestrator:
                     # 8️⃣ LLM RESPONSE
                     if raw_data:
                         if template["intent"] == "direction" and raw_data.get("Location"):
-                            final_message = "Bạn có thể bấm nút bên dưới để xem cách đi"
+                            final_message = get_msg("direction", user_lang)
                         else:
                             final_message = self.synthesize_response(
                                 synthesized_query, raw_data, template["intent"]
