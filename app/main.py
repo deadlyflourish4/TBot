@@ -23,6 +23,7 @@ from google import genai
 from google.genai.types import GenerateContentConfig, ImageConfig, Modality, Part
 from langdetect import detect
 from PIL import Image
+from fastapi.staticfiles import StaticFiles
 
 # ===== 3. Local project imports =====
 from pipeline import GraphOrchestrator
@@ -33,6 +34,13 @@ security = HTTPBearer()
 app = FastAPI(
     title="Orpheo Multi-Region API",
     swagger_ui_parameters={"persistAuthorization": True},
+)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app.mount(
+    "/storage",
+    StaticFiles(directory=os.path.join(BASE_DIR, "storage")),
+    name="storage",
 )
 app.middleware("http")(jwt_middleware)
 app.add_middleware(

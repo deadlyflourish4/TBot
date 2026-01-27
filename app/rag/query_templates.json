@@ -2,7 +2,7 @@
     {
         "key": "thông tin, giới thiệu, mô tả, chi tiết, info, information, description, about, lịch sử, history, kể về, cho biết về",
         "intent": "info",
-        "sql_template": "SELECT SubProjectName, Introduction, Location FROM {prefix}.SubProjects WHERE SubProjectName LIKE :place_name AND ProjectID = :project_id",
+        "sql_template": "SELECT SubProjectName, Introduction FROM {prefix}.SubProjects WHERE SubProjectName LIKE :place_name AND ProjectID = :project_id",
         "required_vars": [
             "place_name",
             "project_id"

@@ -46,7 +46,7 @@ class AnswerAgent(BaseAgent):
         self,
         system_prompt: str = "",
         memory: Optional[SessionMemory] = None,
-        model_name: str = "gemma2:9b",
+        model_name: str = "deepseek-r1:8b",
         temperature: float = 0.2,
     ):
         if not system_prompt:
@@ -74,10 +74,10 @@ class AnswerAgent(BaseAgent):
         """Translate text to target language using Google Translate."""
         if not text or target_lang == "vi":
             return text
-            
+
         try:
             target_code = TRANSLATE_CODES.get(target_lang, "en")
-            translator = GoogleTranslator(source='vi', target=target_code)
+            translator = GoogleTranslator(source="vi", target=target_code)
             result = translator.translate(text)
             return result
         except Exception as e:
@@ -121,17 +121,20 @@ Trả lời:"""
 
         try:
             messages = [
-                {"role": "system", "content": "Bạn là hướng dẫn viên du lịch. Trả lời bằng tiếng Việt."},
+                {
+                    "role": "system",
+                    "content": "Bạn là hướng dẫn viên du lịch. Trả lời bằng tiếng Việt.",
+                },
                 {"role": "user", "content": prompt},
             ]
             response = self.llm.invoke(messages)
             result = response.content.strip().strip('"')
-            
+
             # Translate if user's language is not Vietnamese
             if user_lang != "vi":
                 result = self._translate_to(result, user_lang)
                 print(f"🌐 [TRANSLATE] Vietnamese → {user_lang}")
-            
+
             return result
 
         except Exception as e:
