@@ -10,6 +10,11 @@ services:
       - .env
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://tbot:tbot123@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     deploy:
@@ -19,6 +24,10 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    depends_on:
+      - qdrant
+      - redis
+      - rabbitmq
 
   nginx:
     image: nginx:alpine
@@ -43,5 +52,68 @@ services:
           devices:
             - capabilities: [gpu]
 
+  # ================================
+  # NEW: Vector Database
+  # ================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+
+  # ================================
+  # NEW: Cache & Result Backend
+  # ================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # ================================
+  # NEW: Message Broker
+  # ================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: tbot
+      RABBITMQ_DEFAULT_PASS: tbot123
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  # ================================
+  # NEW: Celery Worker
+  # ================================
+  celery_worker:
+    build: ./app
+    container_name: celery_worker
+    command: celery -A tasks worker -l info -c 2
+    env_file:
+      - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      QDRANT_HOST: qdrant
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://tbot:tbot123@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+      - rabbitmq
+
 volumes:
   ollama:
+  qdrant_data:
+  redis_data:
+  rabbitmq_data:

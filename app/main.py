@@ -140,117 +140,92 @@ class ImageGenRequest(BaseModel):
     model_id: Optional[str] = "gemini-2.5-flash-image"
 
 
-# ---------- TTS ----------
+# ---------- TTS (Async via Celery + Chatterbox) ----------
+from tasks.tts_tasks import generate_tts, LANGUAGE_MAP
+
+
+class TTSRequest(BaseModel):
+    """Request model for TTS generation."""
+    text: str
+    language_id: str = "en"  # 23 languages: ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh
+    exaggeration: float = 0.5  # 0.0-1.0, higher = more expressive
+    cfg_weight: float = 0.5  # 0.0-1.0, lower = more expressive
+
+
 @app.post("/api/text-to-speech")
-async def text_to_speech(req: TextRequest):
+async def text_to_speech(req: TTSRequest):
     """
-    VOICE_MAP = {
-        "ar": {"male": "ar-SA-HamedNeural", "female": "ar-SA-ZariyahNeural"},
-        "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
-        "en": {"male": "en-US-BrianMultilingualNeural", "female": "en-US-EmmaMultilingualNeural"},
-        "pt": {"male": "pt-PT-DuarteNeural", "female": "pt-PT-RaquelNeural"},
-        "de": {"male": "de-DE-KillianNeural", "female": "de-DE-SeraphinaMultilingualNeural"},
-        "ko": {"male": "ko-KR-HyunsuMultilingualNeural", "female": "ko-KR-SunHiNeural"},
-        "hu": {"male": "hu-HU-TamasNeural", "female": "hu-HU-NoemiNeural"},
-        "id": {"male": "id-ID-ArdiNeural", "female": "id-ID-GadisNeural"},
-        "ms": {"male": "ms-MY-OsmanNeural", "female": "ms-MY-YasminNeural"},
-        "ru": {"male": "ru-RU-DmitryNeural", "female": "ru-RU-SvetlanaNeural"},
-        "ja": {"male": "ja-JP-KeitaNeural", "female": "ja-JP-NanamiNeural"},
-        "fi": {"male": "fi-FI-HarriNeural", "female": "fi-FI-NooraNeural"},
-        "fr": {"male": "fr-FR-HenriNeural", "female": "fr-FR-VivienneMultilingualNeural"},
-        "fil": {"male": "fil-PH-AngeloNeural", "female": "fil-PH-BlessicaNeural"},
-        "es": {"male": "es-ES-AlvaroNeural", "female": "es-ES-XimenaNeural"},
-        "th": {"male": "th-TH-NiwatNeural", "female": "th-TH-PremwadeeNeural"},
-        "tr": {"male": "tr-TR-AhmetNeural", "female": "tr-TR-EmelNeural"},
-        "zh-CN": {"male": "zh-CN-YunjianNeural", "female": "zh-CN-XiaoxiaoNeural"},
-        "zh-HK": {"male": "zh-HK-WanLungNeural", "female": "zh-HK-HiuGaaiNeural"},
-        "vi": {"male": "vi-VN-NamMinhNeural", "female": "vi-VN-HoaiMyNeural"},
-        "it": {"male": "it-IT-DiegoNeural", "female": "it-IT-ElsaNeural"},
-    }
-    Generate text-to-speech (TTS) audio and upload to GCS.
-
-    Args:
-        req (TextRequest): Input containing 'text'.
-
+    Submit TTS request for async processing via Celery.
+    
+    Supported languages (23):
+    ar (Arabic), da (Danish), de (German), el (Greek), en (English),
+    es (Spanish), fi (Finnish), fr (French), he (Hebrew), hi (Hindi),
+    it (Italian), ja (Japanese), ko (Korean), ms (Malay), nl (Dutch),
+    no (Norwegian), pl (Polish), pt (Portuguese), ru (Russian),
+    sv (Swedish), sw (Swahili), tr (Turkish), zh (Chinese)
+    
     Returns:
-        dict: JSON response with metadata and upload URL.
+        task_id: Use to poll /api/tts/status/{task_id}
     """
     text = req.text.strip()
     if not text:
-        return {"error": "Text cannot be empty"}
+        raise HTTPException(400, "Text cannot be empty")
     if len(text) > 1000:
-        return {"error": "Text too long (max 1000 chars)"}
-
-    # Detect language and select voice
-    lang_code = req.lang_code
-    gender = req.gender
-
-    voice_group = VOICE_MAP.get(lang_code, VOICE_MAP["default"])
-    voice = voice_group.get(gender, VOICE_MAP["default"]["female"])
-
-    # Generate to memory buffer
-    communicate = edge_tts.Communicate(text=text, voice=voice)
-    buffer = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            buffer.write(chunk["data"])
-    buffer.seek(0)
-
-    # Generate a globally unique file name
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    tts_id = uuid.uuid4().hex
-    blob_name = f"tts/{timestamp}_{tts_id}.mp3"
-
-    try:
-        gcs_url = tts_storage.upload_blob_from_memory(GCS_bucket, buffer, blob_name)
-    except Exception as e:
-        return {"error": f"GCS upload failed: {str(e)}"}
-    finally:
-        buffer.close()
-
+        raise HTTPException(400, "Text too long (max 1000 chars)")
+    
+    if req.language_id not in LANGUAGE_MAP:
+        raise HTTPException(400, f"Unsupported language: {req.language_id}. Supported: {list(LANGUAGE_MAP.keys())}")
+    
+    # Submit to Celery queue
+    task = generate_tts.delay(
+        text=text,
+        language_id=req.language_id,
+        exaggeration=req.exaggeration,
+        cfg_weight=req.cfg_weight,
+    )
+    
     return {
-        "tts_id": tts_id[:8],  # short form for tracking
-        "voice_used": voice,
-        "gcs_url": gcs_url,
-        "message": "TTS successfully generated and uploaded to GCS.",
+        "task_id": task.id,
+        "status": "pending",
+        "message": "TTS processing started. Poll /api/tts/status/{task_id} for result.",
     }
 
 
-@app.post("/api/upload-tts")
-async def upload_tts(gcs_url: str, upload: bool = True):
+@app.get("/api/tts/status/{task_id}")
+async def tts_status(task_id: str):
     """
-    Upload or discard a previously generated text-to-speech (TTS) audio file.
-
-    Args:
-        gcs_url (str): The public URL of the file in GCS.
-        upload (bool): If False, delete the file. If True, keep it.
-
+    Check TTS task status.
+    
     Returns:
-        dict: JSON message about the result.
+        - status: "PENDING" | "STARTED" | "completed" | "failed"
+        - url: Audio URL (when completed)
     """
-    if not gcs_url:
-        return {"error": "Missing gcs_url"}
-
-    try:
-        if not upload:
-            # Discard (delete) the blob
-            tts_storage.delete_blob(gcs_url)
-            return {"message": f"TTS file deleted: {gcs_url}"}
+    from celery.result import AsyncResult
+    from tasks import celery_app
+    
+    result = AsyncResult(task_id, app=celery_app)
+    
+    if result.ready():
+        if result.successful():
+            return {"status": "completed", **result.get()}
         else:
-            # No action needed — already uploaded
-            return {"message": "TTS file retained successfully.", "public_url": gcs_url}
+            return {"status": "failed", "error": str(result.result)}
+    else:
+        return {"status": result.state, "task_id": task_id}
 
-    except Exception as e:
-        return {"error": f"Operation failed: {str(e)}"}
+
+@app.get("/api/tts/languages")
+async def tts_languages():
+    """Get list of supported TTS languages."""
+    return {"languages": LANGUAGE_MAP}
 
 
 @app.post("/api/delete-tts")
 def delete_tts(url: str = Body(..., embed=True)):
-    try:
-        result = tts_storage.delete_blob(url)
-        return {"message": "Deleted successfully", "url": url, "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Delete a TTS audio file. TODO: Implement based on your storage backend."""
+    # TODO: Call backend API to delete file
+    return {"message": "Not implemented", "url": url}
+
 
 
 # ---------- TRANSLATE ----------
