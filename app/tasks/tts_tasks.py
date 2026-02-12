@@ -5,6 +5,7 @@ Supports 23 languages via ChatterboxMultilingualTTS.
 import io
 import logging
 import os
+import time
 from typing import Optional
 
 from tasks import celery_app
@@ -40,167 +41,144 @@ LANGUAGE_MAP = {
     "zh": "Chinese",
 }
 
+# ========================================
+# LOCAL STORAGE
+# ========================================
+STORAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "storage", "tts")
+os.makedirs(STORAGE_DIR, exist_ok=True)
+
+
+def save_audio_local(audio_buffer: io.BytesIO, filename: str) -> dict:
+    """Save WAV audio to local storage directory."""
+    file_path = os.path.join(STORAGE_DIR, filename)
+
+    with open(file_path, "wb") as f:
+        f.write(audio_buffer.read())
+
+    file_id = filename.replace("tts_", "").replace(".wav", "")
+    logger.info(f"Audio saved: {file_path}")
+
+    return {
+        "url": f"/storage/tts/{filename}",
+        "file_id": file_id,
+        "path": os.path.abspath(file_path),
+    }
+
 
 # ========================================
-# TODO: CONFIGURE EXTERNAL UPLOAD API
-# ========================================
-# Bạn cần điền thông tin API upload từ backend:
-#
-# UPLOAD_API_URL = "https://your-backend.com/api/upload-audio"
-# UPLOAD_API_KEY = os.getenv("UPLOAD_API_KEY", "")
-#
-# Ví dụ curl mà backend cung cấp:
-# curl -X POST https://your-backend.com/api/upload-audio \
-#   -H "Authorization: Bearer YOUR_API_KEY" \
-#   -F "file=@audio.wav" \
-#   -F "filename=tts_abc123.wav"
-#
-# Response expected:
-# {"url": "https://cdn.example.com/audio/tts_abc123.wav", "file_id": "abc123"}
+# CELERY TASKS
 # ========================================
 
-UPLOAD_API_URL = os.getenv("TTS_UPLOAD_API_URL", "")
-UPLOAD_API_KEY = os.getenv("TTS_UPLOAD_API_KEY", "")
+# Cache model in worker process to avoid reloading on every request
+_model_cache = {}
 
 
-def upload_audio_to_backend(audio_buffer: io.BytesIO, filename: str) -> dict:
-    """
-    Upload audio file to external backend API.
-    
-    TODO: Implement this function based on your backend API spec.
-    
-    Args:
-        audio_buffer: BytesIO containing WAV audio data
-        filename: Suggested filename (e.g., "tts_abc123.wav")
-        
-    Returns:
-        {"url": "https://...", "file_id": "..."}
-        
-    Example implementation for multipart upload:
-    
-    >>> import requests
-    >>> response = requests.post(
-    >>>     UPLOAD_API_URL,
-    >>>     headers={"Authorization": f"Bearer {UPLOAD_API_KEY}"},
-    >>>     files={"file": (filename, audio_buffer, "audio/wav")},
-    >>> )
-    >>> return response.json()
-    """
-    import requests
-    
-    if not UPLOAD_API_URL:
-        raise ValueError(
-            "TTS_UPLOAD_API_URL not configured. "
-            "Set environment variable or update UPLOAD_API_URL in tts_tasks.py"
-        )
-    
-    # TODO: Modify this based on your backend API format
-    response = requests.post(
-        UPLOAD_API_URL,
-        headers={
-            "Authorization": f"Bearer {UPLOAD_API_KEY}" if UPLOAD_API_KEY else None,
-            # Add other headers as needed
-        },
-        files={
-            "file": (filename, audio_buffer, "audio/wav"),
-        },
-        # Or use JSON body:
-        # json={"filename": filename, "data": base64.b64encode(audio_buffer.read()).decode()}
-    )
-    
-    response.raise_for_status()
-    return response.json()
+def _get_model(device: str):
+    """Load and cache ChatterboxMultilingualTTS model."""
+    if "model" not in _model_cache:
+        from chatterbox.tts import ChatterboxTTS
+        logger.info(f"[Chatterbox] Loading model on {device} (first time)...")
+        _model_cache["model"] = ChatterboxTTS.from_pretrained(device=device)
+        logger.info("[Chatterbox] Model loaded and cached.")
+    return _model_cache["model"]
 
 
-@celery_app.task(bind=True, max_retries=3, time_limit=180)
+@celery_app.task(bind=True, max_retries=3, time_limit=300)
 def generate_tts(
     self,
     text: str,
     language_id: str = "en",
+    audio_id: Optional[str] = None,
     audio_prompt_path: Optional[str] = None,
     exaggeration: float = 0.5,
     cfg_weight: float = 0.5,
 ) -> dict:
     """
-    Generate TTS using ChatterboxMultilingualTTS and upload to backend.
-    
+    Generate TTS audio using Chatterbox and save locally.
+
     Args:
-        text: Text to synthesize (max 1000 chars)
-        language_id: Language code (ar, da, de, el, en, es, fi, fr, he, hi,
-                     it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh)
+        text: Text to synthesize
+        language_id: Language code (23 supported)
+        audio_id: Custom audio ID (from C#), defaults to celery task id
         audio_prompt_path: Optional ~10s WAV for voice cloning
-        exaggeration: Expressiveness 0.0-1.0 (default 0.5)
-            - 0.5: Normal/neutral
-            - 0.7+: More dramatic/expressive
-        cfg_weight: CFG weight 0.0-1.0 (default 0.5)
-            - 0.5: Balanced
-            - 0.3: More expressive, slower
-            - 0.0: Language transfer mode
-        
+        exaggeration: Voice expressiveness 0.0-1.0
+        cfg_weight: CFG guidance weight 0.0-1.0
+
     Returns:
-        {"url": "...", "task_id": "...", "language": "...", "status": "completed"}
+        {"url": "...", "file_id": "...", "path": "...", "language": "...", "status": "completed"}
     """
     import torch
     import torchaudio as ta
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    
+
+    start = time.time()
+
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"[Chatterbox] lang={language_id}, device={device}, text_len={len(text)}")
-        
+
         # Validate language
         if language_id not in LANGUAGE_MAP:
             logger.warning(f"Unsupported language '{language_id}', falling back to 'en'")
             language_id = "en"
-        
-        # Load model (cached after first call)
-        model = ChatterboxMultilingualTTS.from_pretrained(device=device)
-        
+
+        # Load model (cached in worker process)
+        model = _get_model(device)
+
         # Build generate kwargs
         generate_kwargs = {
             "exaggeration": exaggeration,
             "cfg_weight": cfg_weight,
-            "language_id": language_id,
         }
-        
+
         # Voice cloning (optional)
         if audio_prompt_path and os.path.exists(audio_prompt_path):
             generate_kwargs["audio_prompt_path"] = audio_prompt_path
             logger.info(f"[Chatterbox] Using voice clone from: {audio_prompt_path}")
-        
+
         # Generate audio
         wav = model.generate(text, **generate_kwargs)
-        
+
         # Save to buffer
         audio_buffer = io.BytesIO()
         ta.save(audio_buffer, wav, model.sr, format="wav")
         audio_buffer.seek(0)
-        
-        # Upload to backend
-        filename = f"tts_{self.request.id}.wav"
-        upload_result = upload_audio_to_backend(audio_buffer, filename)
-        
-        logger.info(f"[Chatterbox] Upload success: {upload_result}")
-        
+
+        # Save to local storage
+        file_id = audio_id or self.request.id
+        filename = f"tts_{file_id}.wav"
+        save_result = save_audio_local(audio_buffer, filename)
+
+        elapsed = round(time.time() - start, 2)
+        logger.info(f"[Chatterbox] Done in {elapsed}s: {save_result['url']}")
+
         return {
-            "url": upload_result.get("url"),
-            "file_id": upload_result.get("file_id"),
+            "url": save_result["url"],
+            "file_id": save_result["file_id"],
+            "path": save_result["path"],
             "task_id": self.request.id,
             "language": language_id,
+            "duration_seconds": elapsed,
             "status": "completed",
         }
-        
+
     except Exception as e:
         logger.error(f"[Chatterbox] TTS error: {e}", exc_info=True)
-        self.retry(exc=e, countdown=2 ** self.request.retries)
+        raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
 
 @celery_app.task
 def cleanup_old_audio(max_age_hours: int = 24):
-    """
-    Delete old TTS files.
-    TODO: Implement based on your storage backend.
-    """
-    logger.info(f"Cleanup task called with max_age_hours={max_age_hours}")
-    # TODO: Call backend API to cleanup old files if needed
-    return {"status": "not_implemented"}
+    """Delete TTS files older than max_age_hours from local storage."""
+    import glob
+
+    cutoff = time.time() - (max_age_hours * 3600)
+    pattern = os.path.join(STORAGE_DIR, "tts_*.wav")
+    deleted = 0
+
+    for filepath in glob.glob(pattern):
+        if os.path.getmtime(filepath) < cutoff:
+            os.remove(filepath)
+            deleted += 1
+
+    logger.info(f"Cleanup: deleted {deleted} files older than {max_age_hours}h")
+    return {"deleted": deleted}

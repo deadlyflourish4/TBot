@@ -1,194 +1,72 @@
 """
-TBot Pipeline with Query-Oriented RAG.
+TBot Pipeline V2 with TravelAgent (LLM Function Calling).
 
 Flow:
-1. User Input → Reflection → Synthesized Query
-2. Semantic Router → [Chitchat] → LLMs
-                   → [RAG] → QueryStore → Reranker → SQL Execute → LLMs
+1. User Input → TravelAgent → LLM decides tool
+2. ToolExecutor → SQL query / Qdrant vector search → result
+3. LLM synthesizes response
 """
 import logging
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict
 
-import torch
-from langdetect import detect, LangDetectException
-from sentence_transformers import SentenceTransformer
-from sqlalchemy import text
-
-from agents.Answeragent import AnswerAgent
-from agents.SemanticRouter import SemanticRouter
 from database.db import MultiDBManager
-from rag.location import NERService, LocationStore
-from rag.query_store import QueryStore
-from rag.reranker import Reranker
-from utils.Reflection import Reflection
-from utils.SessionMemory import SessionMemory
+from agents.travel_agent import TravelAgent
+from tools.executor import ToolExecutor
+from services.chat_manager import ChatManager
 
 logger = logging.getLogger(__name__)
 
-# Multilingual messages
-MESSAGES = {
-    "vi": {
-        "vague": "Bạn muốn hỏi gì về {place}? Ví dụ: thông tin, vị trí, video...",
-        "no_template": "Xin lỗi, tôi không hiểu câu hỏi của bạn.",
-        "missing_place": "Bạn muốn hỏi về địa điểm nào?",
-        "no_result": "Xin lỗi, không tìm thấy thông tin.",
-        "direction": "Bạn có thể bấm nút bên dưới để xem cách đi",
-    },
-    "en": {
-        "vague": "What would you like to know about {place}? E.g: info, location, video...",
-        "no_template": "Sorry, I don't understand your question.",
-        "missing_place": "Which place are you asking about?",
-        "no_result": "Sorry, I couldn't find any information.",
-        "direction": "You can click the button below to see directions",
-    },
-}
 
-def detect_lang(text: str) -> str:
-    """Detect language, default to Vietnamese."""
-    try:
-        lang = detect(text)
-        return "en" if lang == "en" else "vi"
-    except LangDetectException:
-        return "vi"
-
-def get_msg(key: str, lang: str, **kwargs) -> str:
-    """Get message in detected language."""
-    msg = MESSAGES.get(lang, MESSAGES["vi"]).get(key, MESSAGES["vi"][key])
-    return msg.format(**kwargs) if kwargs else msg
-
-
-# ==========================================================
-# DB WRAPPER
-# ==========================================================
-class DBWrapper:
-    """Database wrapper with parameterized query support."""
-
-    def __init__(self, engine, debug: bool = False):
-        self.engine = engine
-        self.debug = debug
-
-    def run_query(self, sql: str, params: dict = None) -> List[Dict]:
-        """Execute SQL query with parameters."""
-        if self.debug:
-            logger.debug(f"SQL: {sql.strip()}")
-            logger.debug(f"Params: {params}")
-
-        with self.engine.connect() as conn:
-            result = conn.execute(text(sql), params or {})
-            rows = [dict(r._mapping) for r in result]
-
-        if self.debug:
-            logger.debug(f"Rows: {len(rows)}")
-
-        return rows
-
-
-# ==========================================================
-# PIPELINE (Shared Resources)
-# ==========================================================
-class Pipeline:
-    """Shared resources - initialized once."""
+class GraphOrchestrator:
+    """
+    V2 Orchestrator using TravelAgent with LLM function calling.
+    Replaces SemanticRouter + QueryStore + Reranker pipeline.
+    """
 
     def __init__(self):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_name = "anansupercuteeeee/multilingual-traveling"
-
-        logger.info(f"Loading embedder: {model_name} on {device.upper()}")
-        self.embedder = SentenceTransformer(model_name, device=device)
-
-        # Core components
+        # Database
         self.db_manager = MultiDBManager()
-        self.semantic_router = SemanticRouter(self.embedder)
-        self.ner_service = NERService()
 
-        # Location store
-        self.location_store = LocationStore(
-            embedder=self.embedder,
+        # Vector store (graceful fallback if Qdrant not available)
+        vector_store = self._init_vector_store()
+
+        # ToolExecutor with optional vector search
+        self.executor = ToolExecutor(
             db_manager=self.db_manager,
-            ner_service=self.ner_service,
+            vector_store=vector_store,
         )
-        self.location_store.preload()
 
-        # Query RAG components
-        self.query_store = QueryStore(embedder=self.embedder)
-        self.reranker = Reranker()
+        # TravelAgent (LLM + function calling)
+        self.agent = TravelAgent(executor=self.executor)
 
-        logger.info("Pipeline initialized")
+        # Chat session manager
+        self.chat_manager = ChatManager(db_manager=self.db_manager)
 
+        logger.info(
+            f"GraphOrchestrator V2 initialized | "
+            f"vector_store={'✅' if vector_store else '❌ (SQL only)'}"
+        )
 
-# ==========================================================
-# GRAPH ORCHESTRATOR
-# ==========================================================
-class GraphOrchestrator:
-    """Main orchestrator with Query-Oriented RAG."""
-
-    def __init__(self, debug: bool = False):
-        self.debug = debug
-        self.memory = SessionMemory()
-        self.pipeline = Pipeline()
-
-        # Shared components
-        self.router = self.pipeline.semantic_router
-        self.location_store = self.pipeline.location_store
-        self.db_manager = self.pipeline.db_manager
-        self.query_store = self.pipeline.query_store
-        self.reranker = self.pipeline.reranker
-
-        # LLM Agent
-        self.answer_agent = AnswerAgent(system_prompt="", memory=self.memory)
-
-        # Reflection module
-        self.reflection = Reflection(llm=self.answer_agent.llm)
-
-    def _log(self, msg: str) -> None:
-        if self.debug:
-            logger.debug(msg)
-
-    # ----------------------------------------------------------
-    # LLM Response
-    # ----------------------------------------------------------
-    def synthesize_response(self, question: str, data: Any, intent: str) -> str:
-        """Generate natural language response."""
+    def _init_vector_store(self):
+        """Initialize TravelVectorStore, return None if Qdrant unavailable."""
         try:
-            return self.answer_agent.run_synthesizer(question, data, intent)
+            from sentence_transformers import SentenceTransformer
+            from rag.vector_store import TravelVectorStore
+
+            embedder = SentenceTransformer("intfloat/multilingual-e5-small")
+            store = TravelVectorStore(
+                embedder=embedder,
+                host=os.getenv("QDRANT_HOST", "localhost"),
+                port=int(os.getenv("QDRANT_PORT", "6333")),
+            )
+            logger.info("TravelVectorStore loaded ✅")
+            return store
         except Exception as e:
-            logger.error(f"LLM error: {e}")
-            return str(data)
+            logger.warning(f"TravelVectorStore unavailable: {e} — running SQL only")
+            return None
 
-    # ----------------------------------------------------------
-    # RAG: Execute SQL Template
-    # ----------------------------------------------------------
-    def execute_rag_query(
-        self,
-        template: Dict,
-        variables: Dict,
-        ctx: Dict,
-    ) -> Optional[Dict]:
-        """Execute SQL template with bound variables."""
-        engine = self.db_manager.get_engine(ctx["region_id"])
-        db = DBWrapper(engine, debug=self.debug)
-        prefix = self.db_manager.DB_MAP[ctx["region_id"]]["prefix"]
-
-        sql = template["sql_template"].replace("{prefix}", prefix)
-
-        print(f"📊 [SQL] {sql}")
-        print(f"📊 [PARAMS] {variables}")
-        rows = db.run_query(sql, variables)
-        print(f"📊 [RESULT] {len(rows)} rows")
-
-        return rows[0] if rows else None
-
-    # ----------------------------------------------------------
-    # Chitchat Handler
-    # ----------------------------------------------------------
-    def run_chitchat(self, question: str) -> Dict:
-        """Handle chitchat directly with LLM."""
-        return {"context": "social", "query": question}
-
-    # ==========================================================
-    # MAIN PIPELINE
-    # ==========================================================
-    def run(
+    async def run(
         self,
         session_id: str,
         user_question: str,
@@ -197,137 +75,46 @@ class GraphOrchestrator:
         region_id: int = 0,
     ) -> Dict[str, Any]:
         """
-        Main pipeline entry point.
+        Main entry point.
 
-        Flow:
-        1. Reflection (rewrite query)
-        2. Semantic Router (chitchat vs RAG)
-        3. [Chitchat] → LLM
-        4. [RAG] → QueryStore → Reranker → SQL → LLM
+        Args:
+            session_id: Chat session ID
+            user_question: User's question
+            user_location: User's GPS coordinates
+            project_id: Project filter
+            region_id: Database region (0-3)
+
+        Returns:
+            {"Message": "...", "location": ..., "audio": ..., "session_id": ...}
         """
-        ctx = {
-            "session_id": f"{session_id}_{region_id}",
-            "project_id": project_id,
+        context = {
             "region_id": region_id,
+            "project_id": project_id,
+            "user_location": user_location,
         }
 
-        print(f"\n{'='*50}")
-        print(f"📥 [INPUT] {user_question}")
-        print(f"{'='*50}")
+        # Get chat history for context
+        session = self.chat_manager.get_session(session_id)
+        chat_history = None
+        if session:
+            chat_history = session.get_history(limit=6)
 
-        # 1️⃣ REFLECTION - Rewrite query with context
-        self.memory.append_user(ctx["session_id"], user_question)
-        synthesized_query = self.reflection(self.memory, ctx["session_id"])
-        print(f"🔄 [REFLECTION] {user_question} → {synthesized_query}")
+        logger.info(f"[Pipeline] Query: {user_question[:80]}... | region={region_id}")
 
-        # 2️⃣ SEMANTIC ROUTER - Chitchat or RAG?
-        route_result = self.router.classify(synthesized_query)
-        is_chitchat = route_result["is_chitchat"]
-        route_type = 'CHITCHAT' if is_chitchat else 'RAG'
-        print(f"🚦 [ROUTER] {route_type} (score: {route_result['score']:.2f})")
-
-        # 2.5️⃣ VAGUE QUERY DETECTION
-        user_lang = detect_lang(user_question)
-        vague_patterns = ["thì sao", "thế nào", "như thế nào", "sao", "gì", "what about"]
-        is_vague = any(p in synthesized_query.lower() for p in vague_patterns) and len(synthesized_query) < 30
-        
-        if is_vague and is_chitchat:
-            # Check if there's context from previous question
-            last_place = self.memory.get_ctx(ctx["session_id"], "last_target_place")
-            if last_place:
-                print(f"❓ [VAGUE] Detected vague query, asking for clarification")
-                final_message = get_msg("vague", user_lang, place=last_place['name'])
-                self.memory.append_ai(ctx["session_id"], final_message)
-                return {"Message": final_message, "location": None, "audio": None, "session_id": ctx["session_id"]}
-
-        # 3️⃣ ROUTE: Chitchat vs RAG
-        if is_chitchat:
-            raw_data = self.run_chitchat(synthesized_query)
-            final_message = self.synthesize_response(
-                synthesized_query, raw_data, "chitchat"
+        # Run TravelAgent (LLM function calling loop)
+        try:
+            response_text = await self.agent.run(
+                query=user_question,
+                context=context,
+                chat_history=chat_history,
             )
-        else:
-            # 4️⃣ QUERY RAG - Match query to template
-            candidates = self.query_store.match(synthesized_query, top_k=3)
-
-            if not candidates:
-                logger.warning("No matching query templates")
-                raw_data = {"error": "no_template_match"}
-                final_message = get_msg("no_template", user_lang)
-            else:
-                # 5️⃣ RERANKER - Get best match
-                reranked = self.reranker.rerank(synthesized_query, candidates, top_k=1)
-                best_match = reranked[0]
-                template = best_match["template"]
-
-                print(f"📋 [TEMPLATE] {template['intent']} (score: {best_match.get('rerank_score', best_match['score']):.3f})")
-
-                # 6️⃣ EXTRACT VARIABLES - Use NER for place_name
-                variables = {"project_id": project_id}  # Always include project_id
-                
-                if "place_name" in template["required_vars"]:
-                    ner_locs = self.location_store.extract_ner(synthesized_query)
-                    print(f"🏷️ [NER] Extracted: {ner_locs}")
-
-                    if ner_locs:
-                        place = self.location_store.match(
-                            region_id=region_id,
-                            project_id=project_id,
-                            ner_location=ner_locs[0],
-                        )
-                        if place:
-                            variables["place_name"] = place["name"]
-
-                    # Fallback to context
-                    if "place_name" not in variables:
-                        last_place = self.memory.get_ctx(ctx["session_id"], "last_target_place")
-                        if last_place:
-                            variables["place_name"] = last_place["name"]
-
-                # Check required variables
-                missing = [v for v in template["required_vars"] if v not in variables]
-                if missing:
-                    logger.warning(f"Missing variables: {missing}")
-                    raw_data = {"error": "missing_variables", "missing": missing}
-                    final_message = get_msg("missing_place", user_lang)
-                else:
-                    # 7️⃣ EXECUTE SQL
-                    raw_data = self.execute_rag_query(template, variables, ctx)
-
-                    # Save target place
-                    if "place_name" in variables:
-                        self.memory.set_ctx(
-                            ctx["session_id"],
-                            "last_target_place",
-                            {"name": variables["place_name"]},
-                        )
-
-                    # 8️⃣ LLM RESPONSE
-                    if raw_data:
-                        if template["intent"] == "direction" and raw_data.get("Location"):
-                            final_message = get_msg("direction", user_lang)
-                        else:
-                            final_message = self.synthesize_response(
-                                synthesized_query, raw_data, template["intent"]
-                            )
-                    else:
-                        final_message = "Xin lỗi, không tìm thấy thông tin."
-
-        # Save AI response
-        self.memory.append_ai(ctx["session_id"], final_message)
-
-        # Format output
-        location = None
-        audio = None
-
-        if raw_data and isinstance(raw_data, dict):
-            location = raw_data.get("Location")
-            if raw_data.get("media_type", "").lower() == "video":
-                audio = raw_data.get("url")
+        except Exception as e:
+            logger.error(f"[Pipeline] Agent error: {e}", exc_info=True)
+            response_text = "Xin lỗi, đã có lỗi xảy ra. Vui lòng thử lại."
 
         return {
-            "Message": final_message,
-            "location": location,
-            "audio": audio,
-            "session_id": ctx["session_id"],
+            "Message": response_text,
+            "location": None,
+            "audio": None,
+            "session_id": session_id,
         }

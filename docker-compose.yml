@@ -99,7 +99,7 @@ services:
   celery_worker:
     build: ./app
     container_name: celery_worker
-    command: celery -A tasks worker -l info -c 2
+    command: celery -A tasks worker -l info -c 1 -Q default
     env_file:
       - .env
     environment:
@@ -108,6 +108,17 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://tbot:tbot123@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - tts_storage:/app/storage/tts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - redis
       - rabbitmq
@@ -117,3 +128,4 @@ volumes:
   qdrant_data:
   redis_data:
   rabbitmq_data:
+  tts_storage:

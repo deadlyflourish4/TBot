@@ -7,7 +7,6 @@ from io import BytesIO
 from os import getenv
 from typing import List, Optional
 
-import edge_tts
 
 from database.db import MultiDBManager
 from deep_translator import GoogleTranslator
@@ -29,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pipeline import GraphOrchestrator
 from pydantic import BaseModel
 from security.middleware import jwt_middleware
+from tasks.sync_tasks import sync_all_regions, sync_single_region
 
 security = HTTPBearer()
 app = FastAPI(
@@ -76,48 +76,14 @@ app.openapi = custom_openapi
 bot = GraphOrchestrator()
 db_manager = MultiDBManager()
 chat_sessions = ChatManager(db_manager=db_manager, session_timeout=1800)
-tts_storage = GCStorage(credentials_path="./GCP/guidepassasiacloud-250f74bc75bb.json")
 
-# --- cache voices ---
-GCS_bucket = "guidepassasia_chatbot"
+# --- GCS (for image generation only) ---
 GCS_image = "guidepassasia_image_generation"
-tts_buffers = {}
-VOICE_MAP = {
-    "ar": {"male": "ar-SA-HamedNeural", "female": "ar-SA-ZariyahNeural"},
-    "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
-    "en": {
-        "male": "en-US-BrianMultilingualNeural",
-        "female": "en-US-EmmaMultilingualNeural",
-    },
-    "pt": {"male": "pt-PT-DuarteNeural", "female": "pt-PT-RaquelNeural"},
-    "de": {
-        "male": "de-DE-KillianNeural",
-        "female": "de-DE-SeraphinaMultilingualNeural",
-    },
-    "ko": {"male": "ko-KR-HyunsuMultilingualNeural", "female": "ko-KR-SunHiNeural"},
-    "hu": {"male": "hu-HU-TamasNeural", "female": "hu-HU-NoemiNeural"},
-    "id": {"male": "id-ID-ArdiNeural", "female": "id-ID-GadisNeural"},
-    "ms": {"male": "ms-MY-OsmanNeural", "female": "ms-MY-YasminNeural"},
-    "ru": {"male": "ru-RU-DmitryNeural", "female": "ru-RU-SvetlanaNeural"},
-    "ja": {"male": "ja-JP-KeitaNeural", "female": "ja-JP-NanamiNeural"},
-    "fi": {"male": "fi-FI-HarriNeural", "female": "fi-FI-NooraNeural"},
-    "fr": {"male": "fr-FR-HenriNeural", "female": "fr-FR-VivienneMultilingualNeural"},
-    "fil": {"male": "fil-PH-AngeloNeural", "female": "fil-PH-BlessicaNeural"},
-    "es": {"male": "es-ES-AlvaroNeural", "female": "es-ES-XimenaNeural"},
-    "th": {"male": "th-TH-NiwatNeural", "female": "th-TH-PremwadeeNeural"},
-    "tr": {"male": "tr-TR-AhmetNeural", "female": "tr-TR-EmelNeural"},
-    "zh-CN": {"male": "zh-CN-YunjianNeural", "female": "zh-CN-XiaoxiaoNeural"},
-    "zh-HK": {"male": "zh-HK-WanLungNeural", "female": "zh-HK-HiuGaaiNeural"},
-    "vi": {"male": "vi-VN-NamMinhNeural", "female": "vi-VN-HoaiMyNeural"},
-    "it": {"male": "it-IT-DiegoNeural", "female": "it-IT-ElsaNeural"},
-}
 
 
 # ---------- MODELS ----------
 class TextRequest(BaseModel):
     text: str
-    lang_code: str
-    gender: str
 
 
 class ChatRequest(BaseModel):
@@ -145,60 +111,63 @@ from tasks.tts_tasks import generate_tts, LANGUAGE_MAP
 
 
 class TTSRequest(BaseModel):
-    """Request model for TTS generation."""
-    text: str
-    language_id: str = "en"  # 23 languages: ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh
-    exaggeration: float = 0.5  # 0.0-1.0, higher = more expressive
-    cfg_weight: float = 0.5  # 0.0-1.0, lower = more expressive
+    """Request model for TTS generation from C#."""
+    id: str  # Unique ID from C#
+    poi: str  # Point of Interest name
+    langcode: str = "en"  # Language code: en, vi, ko, ja, zh, etc.
+    text: str  # Text content to convert
+    content_type: str = "detail"  # "attraction" or "detail"
 
 
 @app.post("/api/text-to-speech")
 async def text_to_speech(req: TTSRequest):
     """
-    Submit TTS request for async processing via Celery.
+    API 1: Submit TTS request for async processing.
     
-    Supported languages (23):
-    ar (Arabic), da (Danish), de (German), el (Greek), en (English),
-    es (Spanish), fi (Finnish), fr (French), he (Hebrew), hi (Hindi),
-    it (Italian), ja (Japanese), ko (Korean), ms (Malay), nl (Dutch),
-    no (Norwegian), pl (Polish), pt (Portuguese), ru (Russian),
-    sv (Swedish), sw (Swahili), tr (Turkish), zh (Chinese)
+    Input from C#:
+        id, poi, langcode, text, content_type
     
     Returns:
-        task_id: Use to poll /api/tts/status/{task_id}
+        task_id to use with /api/tts/status/{task_id}
     """
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text cannot be empty")
-    if len(text) > 1000:
-        raise HTTPException(400, "Text too long (max 1000 chars)")
+    if len(text) > 5000:
+        raise HTTPException(400, "Text too long (max 5000 chars)")
     
-    if req.language_id not in LANGUAGE_MAP:
-        raise HTTPException(400, f"Unsupported language: {req.language_id}. Supported: {list(LANGUAGE_MAP.keys())}")
+    # Map langcode to Chatterbox language_id
+    language_id = req.langcode.lower()
+    if language_id not in LANGUAGE_MAP:
+        language_id = "en"  # Default to English if unsupported
     
-    # Submit to Celery queue
-    task = generate_tts.delay(
-        text=text,
-        language_id=req.language_id,
-        exaggeration=req.exaggeration,
-        cfg_weight=req.cfg_weight,
+    # Submit to Celery queue with custom ID
+    task = generate_tts.apply_async(
+        kwargs={
+            "text": text,
+            "language_id": language_id,
+            "audio_id": req.id,
+        },
+        task_id=req.id
     )
     
     return {
         "task_id": task.id,
+        "id": req.id,
+        "poi": req.poi,
+        "content_type": req.content_type,
         "status": "pending",
-        "message": "TTS processing started. Poll /api/tts/status/{task_id} for result.",
     }
 
 
 @app.get("/api/tts/status/{task_id}")
 async def tts_status(task_id: str):
     """
-    Check TTS task status.
+    API 2: Check TTS task status.
     
     Returns:
         - status: "PENDING" | "STARTED" | "completed" | "failed"
-        - url: Audio URL (when completed)
+        - url: Local file path (when completed)
     """
     from celery.result import AsyncResult
     from tasks import celery_app
@@ -212,19 +181,6 @@ async def tts_status(task_id: str):
             return {"status": "failed", "error": str(result.result)}
     else:
         return {"status": result.state, "task_id": task_id}
-
-
-@app.get("/api/tts/languages")
-async def tts_languages():
-    """Get list of supported TTS languages."""
-    return {"languages": LANGUAGE_MAP}
-
-
-@app.post("/api/delete-tts")
-def delete_tts(url: str = Body(..., embed=True)):
-    """Delete a TTS audio file. TODO: Implement based on your storage backend."""
-    # TODO: Call backend API to delete file
-    return {"message": "Not implemented", "url": url}
 
 
 
@@ -243,6 +199,17 @@ async def text_translate(req: TextRequest, target_lang: str = "en"):
         return {"error": f"translation_failed: {e}"}
 
 
+# ---------- VECTOR SYNC ----------
+@app.post("/api/sync-vectors")
+async def trigger_vector_sync(region_id: Optional[int] = None):
+    """Trigger Qdrant vector sync (background task)."""
+    if region_id is not None:
+        task = sync_single_region.delay(region_id)
+        return {"task_id": task.id, "region_id": region_id, "status": "syncing"}
+    else:
+        task = sync_all_regions.delay()
+        return {"task_id": task.id, "regions": "all", "status": "syncing"}
+
 # ---------- CHATBOT ----------
 @app.post("/api/chatbot-response")
 async def chatbot_response(req: ChatRequest):
@@ -253,20 +220,21 @@ async def chatbot_response(req: ChatRequest):
         session = chat_sessions.create_session(req.region_id, session_id=session_id)
         session_id = session.session_id
 
-    region_id = req.region_id
-
-    response_text = bot.run(
+    # V2: TravelAgent with function calling (async)
+    result = await bot.run(
         session_id=session_id,
         user_question=req.text,
         user_location=req.user_geography,
         project_id=req.project_id,
-        region_id=region_id,
+        region_id=req.region_id,
     )
 
+    # Save to session history
+    response_text = result.get("Message", "") if isinstance(result, dict) else str(result)
     session.add_message("user", req.text)
-    # session.add_message("assistant", response_text)
+    session.add_message("assistant", response_text)
 
-    return response_text
+    return result
 
 
 @app.post("/api/generate-image")
